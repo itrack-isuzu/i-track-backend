@@ -16,7 +16,7 @@ export const errorHandler = (error, req, res, next) => {
 
   let statusCode = error.statusCode ?? 500;
   let message = error.message || 'Internal server error';
-  let details;
+  let details = error.details;
 
   if (duplicateKeyError) {
     statusCode = 409;

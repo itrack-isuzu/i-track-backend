@@ -1,29 +1,139 @@
 import { randomUUID } from 'node:crypto';
 
 import { User } from '../models/User.js';
-import { verifyPassword, hashPassword } from '../utils/passwords.js';
+import { sendPasswordResetOtpEmail } from '../services/emailjsService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import {
+  OTP_CODE_LENGTH,
+  createOtpCode,
+  hashOtpCode,
+  normalizeOtpCode,
+  verifyOtpCode,
+} from '../utils/otp.js';
+import { verifyPassword, hashPassword } from '../utils/passwords.js';
+import { env } from '../config/env.js';
 
-const findAuthUserByEmail = async (email) =>
-  User.findOne({
-    email: String(email ?? '').trim().toLowerCase(),
-  }).select('+passwordHash');
+const PASSWORD_RESET_REQUEST_MESSAGE =
+  'If an active account exists for that email, we sent a 6-digit OTP code.';
+
+const createHttpError = (message, statusCode = 400) => {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+};
+
+const normalizeEmail = (email) => String(email ?? '').trim().toLowerCase();
+
+const ensureValidEmail = (email) => {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+    throw createHttpError('Enter a valid email address.');
+  }
+
+  return normalizedEmail;
+};
+
+const ensureValidOtpCode = (otpCode) => {
+  const normalizedOtpCode = normalizeOtpCode(otpCode);
+
+  if (normalizedOtpCode.length !== OTP_CODE_LENGTH) {
+    throw createHttpError(`Enter the ${OTP_CODE_LENGTH}-digit OTP code.`);
+  }
+
+  return normalizedOtpCode;
+};
+
+const findAuthUserByEmail = async (
+  email,
+  { includePasswordHash = false, includePasswordReset = false } = {}
+) => {
+  const selectedFields = [
+    includePasswordHash ? '+passwordHash' : null,
+    includePasswordReset ? '+passwordReset' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  const query = User.findOne({
+    email: normalizeEmail(email),
+  });
+
+  return selectedFields ? query.select(selectedFields) : query;
+};
+
+const clearPasswordResetState = (user) => {
+  user.passwordReset = undefined;
+};
+
+const validatePasswordResetOtp = async ({
+  email,
+  otpCode,
+  includePasswordHash = false,
+}) => {
+  const user = await findAuthUserByEmail(email, {
+    includePasswordHash,
+    includePasswordReset: true,
+  });
+
+  if (!user || !user.isActive) {
+    throw createHttpError('Invalid or expired OTP code.');
+  }
+
+  const passwordResetState = user.passwordReset;
+
+  if (!passwordResetState?.otpHash || !passwordResetState?.expiresAt) {
+    throw createHttpError('Invalid or expired OTP code.');
+  }
+
+  if (passwordResetState.expiresAt.getTime() < Date.now()) {
+    clearPasswordResetState(user);
+    await user.save();
+    throw createHttpError('This OTP code has expired. Request a new code.');
+  }
+
+  if ((passwordResetState.attempts ?? 0) >= env.passwordResetOtpMaxAttempts) {
+    clearPasswordResetState(user);
+    await user.save();
+    throw createHttpError('Too many OTP attempts. Request a new code.');
+  }
+
+  const isOtpValid = await verifyOtpCode(
+    otpCode,
+    passwordResetState.otpHash
+  );
+
+  if (isOtpValid) {
+    return user;
+  }
+
+  const nextAttemptCount = (passwordResetState.attempts ?? 0) + 1;
+
+  if (nextAttemptCount >= env.passwordResetOtpMaxAttempts) {
+    clearPasswordResetState(user);
+    await user.save();
+    throw createHttpError('Too many invalid OTP attempts. Request a new code.');
+  }
+
+  user.passwordReset.attempts = nextAttemptCount;
+  await user.save();
+
+  throw createHttpError('The OTP code you entered is incorrect.');
+};
 
 export const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body ?? {};
-  const user = await findAuthUserByEmail(email);
+  const user = await findAuthUserByEmail(email, {
+    includePasswordHash: true,
+  });
 
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
-    const error = new Error('Invalid email or password.');
-    error.statusCode = 401;
-    throw error;
+    throw createHttpError('Invalid email or password.', 401);
   }
 
   if (!user.isActive) {
-    const error = new Error('This account is currently deactivated.');
-    error.statusCode = 403;
-    throw error;
+    throw createHttpError('This account is currently deactivated.', 403);
   }
 
   sendSuccess(res, {
@@ -43,9 +153,7 @@ export const changePassword = asyncHandler(async (req, res) => {
   const user = await User.findById(userId).select('+passwordHash');
 
   if (!user) {
-    const error = new Error('User not found.');
-    error.statusCode = 404;
-    throw error;
+    throw createHttpError('User not found.', 404);
   }
 
   const isCurrentPasswordValid = await verifyPassword(
@@ -54,9 +162,9 @@ export const changePassword = asyncHandler(async (req, res) => {
   );
 
   if (!isCurrentPasswordValid) {
-    const error = new Error('The current password you entered is incorrect.');
-    error.statusCode = 400;
-    throw error;
+    throw createHttpError(
+      'The current password you entered is incorrect.'
+    );
   }
 
   user.passwordHash = await hashPassword(nextPassword);
@@ -64,5 +172,92 @@ export const changePassword = asyncHandler(async (req, res) => {
 
   sendSuccess(res, {
     message: 'Password updated successfully.',
+  });
+});
+
+export const requestPasswordResetOtp = asyncHandler(async (req, res) => {
+  const email = ensureValidEmail(req.body?.email);
+  const user = await findAuthUserByEmail(email, {
+    includePasswordReset: true,
+  });
+
+  if (!user || !user.isActive) {
+    sendSuccess(res, {
+      message: PASSWORD_RESET_REQUEST_MESSAGE,
+    });
+    return;
+  }
+
+  const lastSentAt = user.passwordReset?.lastSentAt?.getTime() ?? 0;
+  const cooldownWindowMs = env.passwordResetOtpCooldownSeconds * 1000;
+
+  if (Date.now() - lastSentAt < cooldownWindowMs) {
+    sendSuccess(res, {
+      message: PASSWORD_RESET_REQUEST_MESSAGE,
+    });
+    return;
+  }
+
+  const otpCode = createOtpCode();
+
+  user.passwordReset = {
+    otpHash: await hashOtpCode(otpCode),
+    expiresAt: new Date(
+      Date.now() + env.passwordResetOtpExpiresMinutes * 60 * 1000
+    ),
+    lastSentAt: new Date(),
+    attempts: 0,
+  };
+
+  await user.save();
+
+  try {
+    await sendPasswordResetOtpEmail({
+      toEmail: user.email,
+      toName: user.name || user.firstName,
+      otpCode,
+    });
+  } catch (error) {
+    clearPasswordResetState(user);
+    await user.save();
+    throw error;
+  }
+
+  sendSuccess(res, {
+    message: PASSWORD_RESET_REQUEST_MESSAGE,
+  });
+});
+
+export const verifyPasswordResetOtp = asyncHandler(async (req, res) => {
+  const email = ensureValidEmail(req.body?.email);
+  const otpCode = ensureValidOtpCode(req.body?.otp);
+
+  await validatePasswordResetOtp({
+    email,
+    otpCode,
+  });
+
+  sendSuccess(res, {
+    message: 'OTP verified. You can now create a new password.',
+  });
+});
+
+export const resetPasswordWithOtp = asyncHandler(async (req, res) => {
+  const email = ensureValidEmail(req.body?.email);
+  const otpCode = ensureValidOtpCode(req.body?.otp);
+  const nextPassword = String(req.body?.nextPassword ?? '');
+
+  const user = await validatePasswordResetOtp({
+    email,
+    otpCode,
+    includePasswordHash: true,
+  });
+
+  user.passwordHash = await hashPassword(nextPassword);
+  clearPasswordResetState(user);
+  await user.save();
+
+  sendSuccess(res, {
+    message: 'Your password has been reset. You can sign in with the new password.',
   });
 });

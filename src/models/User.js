@@ -3,6 +3,31 @@ import mongoose from 'mongoose';
 import { USER_ROLES } from '../constants/enums.js';
 import { baseSchemaOptions } from '../utils/schemaOptions.js';
 
+const passwordResetSchema = new mongoose.Schema(
+  {
+    otpHash: {
+      type: String,
+      default: null,
+    },
+    expiresAt: {
+      type: Date,
+      default: null,
+    },
+    lastSentAt: {
+      type: Date,
+      default: null,
+    },
+    attempts: {
+      type: Number,
+      default: 0,
+    },
+  },
+  {
+    _id: false,
+    id: false,
+  }
+);
+
 const userSchema = new mongoose.Schema(
   {
     firstName: {
@@ -58,6 +83,11 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
       index: true,
+    },
+    passwordReset: {
+      type: passwordResetSchema,
+      select: false,
+      default: undefined,
     },
   },
   baseSchemaOptions

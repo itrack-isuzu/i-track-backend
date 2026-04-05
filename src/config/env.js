@@ -4,12 +4,30 @@ dotenv.config();
 
 const trueValues = new Set(['1', 'true', 'yes', 'on']);
 
+const toOptionalString = (value) => {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalizedValue = String(value).trim();
+  return normalizedValue ? normalizedValue : undefined;
+};
+
 const toBoolean = (value, fallback = false) => {
   if (value === undefined) {
     return fallback;
   }
 
   return trueValues.has(String(value).trim().toLowerCase());
+};
+
+const toNumber = (value, fallback) => {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalizedValue = Number(value);
+  return Number.isFinite(normalizedValue) ? normalizedValue : fallback;
 };
 
 const requireEnv = (value, key) => {
@@ -31,4 +49,22 @@ export const env = {
     true
   ),
   autoSeed: toBoolean(process.env.MONGODB_AUTO_SEED, false),
+  emailjsServiceId: toOptionalString(process.env.EMAILJS_SERVICE_ID),
+  emailjsTemplateId: toOptionalString(process.env.EMAILJS_TEMPLATE_ID),
+  emailjsPublicKey: toOptionalString(process.env.EMAILJS_PUBLIC_KEY),
+  emailjsPrivateKey: toOptionalString(process.env.EMAILJS_PRIVATE_KEY),
+  emailjsAppName: process.env.EMAILJS_APP_NAME?.trim() || 'I-TRACK',
+  emailjsSupportEmail: toOptionalString(process.env.EMAILJS_SUPPORT_EMAIL),
+  passwordResetOtpExpiresMinutes: toNumber(
+    process.env.PASSWORD_RESET_OTP_EXPIRES_MINUTES,
+    10
+  ),
+  passwordResetOtpCooldownSeconds: toNumber(
+    process.env.PASSWORD_RESET_OTP_COOLDOWN_SECONDS,
+    60
+  ),
+  passwordResetOtpMaxAttempts: toNumber(
+    process.env.PASSWORD_RESET_OTP_MAX_ATTEMPTS,
+    5
+  ),
 };

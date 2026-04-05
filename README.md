@@ -27,6 +27,33 @@ In MongoDB Atlas, collections are created automatically the first time the app i
 3. Install dependencies with `npm install`
 4. Start the API with `npm run dev`
 
+## EmailJS password recovery
+
+The forgot-password flow now sends OTP codes through EmailJS from the backend.
+
+Add these variables to `.env`:
+
+- `EMAILJS_SERVICE_ID`
+- `EMAILJS_TEMPLATE_ID`
+- `EMAILJS_PUBLIC_KEY`
+- `EMAILJS_PRIVATE_KEY` (optional, but recommended for server-side requests)
+- `EMAILJS_APP_NAME`
+- `EMAILJS_SUPPORT_EMAIL`
+- `PASSWORD_RESET_OTP_EXPIRES_MINUTES`
+- `PASSWORD_RESET_OTP_COOLDOWN_SECONDS`
+- `PASSWORD_RESET_OTP_MAX_ATTEMPTS`
+
+Your EmailJS template can use these template params:
+
+- `app_name`
+- `otp_code`
+- `otp`
+- `passcode`
+- `to_email`
+- `to_name`
+- `support_email`
+- `expires_in_minutes`
+
 ## Frontend API URLs
 
 - Expo mobile app: `EXPO_PUBLIC_API_URL=http://localhost:4000/api`
@@ -39,6 +66,9 @@ In MongoDB Atlas, collections are created automatically the first time the app i
 - `POST /api/users`
 - `GET /api/vehicles`
 - `POST /api/vehicles`
+- `POST /api/auth/forgot-password/request-otp`
+- `POST /api/auth/forgot-password/verify-otp`
+- `POST /api/auth/forgot-password/reset`
 - `GET /api/driver-allocations`
 - `POST /api/driver-allocations`
 - `POST /api/setup/seed`
