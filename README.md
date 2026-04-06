@@ -43,6 +43,12 @@ Add these variables to `.env`:
 - `PASSWORD_RESET_OTP_COOLDOWN_SECONDS`
 - `PASSWORD_RESET_OTP_MAX_ATTEMPTS`
 
+EmailJS setup note:
+
+- In EmailJS Dashboard, open `Account > Security`
+- Enable API access for non-browser environments
+- If this stays disabled, backend OTP sends will fail with a 403 response
+
 Your EmailJS template can use these template params:
 
 - `app_name`

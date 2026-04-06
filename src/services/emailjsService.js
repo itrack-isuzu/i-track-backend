@@ -17,6 +17,38 @@ const createConfigurationError = () => {
   return error;
 };
 
+const buildEmailJsError = (response, responseText) => {
+  const normalizedResponseText = String(responseText ?? '').trim();
+
+  if (
+    response.status === 403 &&
+    normalizedResponseText.toLowerCase().includes('non-browser environments')
+  ) {
+    const error = new Error(
+      'EmailJS is blocking backend OTP sends. In EmailJS dashboard, open Account > Security and enable API access for non-browser environments.'
+    );
+    error.statusCode = 503;
+    error.details = [normalizedResponseText];
+    return error;
+  }
+
+  if (response.status === 400 || response.status === 401 || response.status === 403) {
+    const error = new Error(
+      'EmailJS rejected the OTP request. Check your service ID, template ID, public key, private key, and EmailJS account security settings.'
+    );
+    error.statusCode = 502;
+    error.details = normalizedResponseText ? [normalizedResponseText] : undefined;
+    return error;
+  }
+
+  const error = new Error(
+    'Unable to send OTP right now. Please try again later.'
+  );
+  error.statusCode = 502;
+  error.details = normalizedResponseText ? [normalizedResponseText] : undefined;
+  return error;
+};
+
 export const sendPasswordResetOtpEmail = async ({
   toEmail,
   toName,
@@ -48,10 +80,19 @@ export const sendPasswordResetOtpEmail = async ({
           otp_code: otpCode,
           otp: otpCode,
           passcode: otpCode,
+          code: otpCode,
           to_email: toEmail,
+          email: toEmail,
+          user_email: toEmail,
+          recipient_email: toEmail,
           to_name: toName,
+          name: toName,
+          user_name: toName,
           support_email: env.emailjsSupportEmail ?? '',
+          reply_to: env.emailjsSupportEmail ?? '',
           expires_in_minutes: String(env.passwordResetOtpExpiresMinutes),
+          subject: `${env.emailjsAppName} password reset OTP`,
+          message: `Your ${env.emailjsAppName} OTP is ${otpCode}. It expires in ${env.passwordResetOtpExpiresMinutes} minutes.`,
         },
       }),
     });
@@ -68,10 +109,5 @@ export const sendPasswordResetOtpEmail = async ({
   }
 
   const responseText = await response.text().catch(() => '');
-  const error = new Error(
-    'Unable to send the password reset email right now. Please try again later.'
-  );
-  error.statusCode = 502;
-  error.details = responseText ? [responseText] : undefined;
-  throw error;
+  throw buildEmailJsError(response, responseText);
 };
