@@ -66,3 +66,18 @@ export const TEST_DRIVE_STATUSES = [
   'cancelled',
   'no_show',
 ];
+
+export const NOTIFICATION_TYPES = [
+  'system',
+  'vehicle',
+  'driver',
+  'alert',
+  'message',
+];
+
+export const PUSH_TOKEN_PLATFORMS = [
+  'android',
+  'ios',
+  'web',
+  'unknown',
+];

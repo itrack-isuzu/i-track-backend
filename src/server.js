@@ -2,6 +2,7 @@ import app from './app.js';
 import { connectDatabase, ensureCollections } from './config/db.js';
 import { env } from './config/env.js';
 import { DriverAllocation } from './models/DriverAllocation.js';
+import { Notification } from './models/Notification.js';
 import { Preparation } from './models/Preparation.js';
 import { TestDriveBooking } from './models/TestDriveBooking.js';
 import { UnitAgentAllocation } from './models/UnitAgentAllocation.js';
@@ -13,6 +14,7 @@ const bootstrapServer = async () => {
   const models = [
     User,
     Vehicle,
+    Notification,
     DriverAllocation,
     UnitAgentAllocation,
     Preparation,

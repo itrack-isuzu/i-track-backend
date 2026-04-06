@@ -38,6 +38,12 @@ const preparationSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    requestedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
     requestedServices: {
       type: [String],
       enum: SERVICE_TYPES,

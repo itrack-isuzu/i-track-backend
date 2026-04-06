@@ -55,6 +55,7 @@ export const env = {
   emailjsPrivateKey: toOptionalString(process.env.EMAILJS_PRIVATE_KEY),
   emailjsAppName: process.env.EMAILJS_APP_NAME?.trim() || 'I-TRACK',
   emailjsSupportEmail: toOptionalString(process.env.EMAILJS_SUPPORT_EMAIL),
+  expoAccessToken: toOptionalString(process.env.EXPO_ACCESS_TOKEN),
   passwordResetOtpExpiresMinutes: toNumber(
     process.env.PASSWORD_RESET_OTP_EXPIRES_MINUTES,
     10

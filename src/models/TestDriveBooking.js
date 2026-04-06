@@ -11,6 +11,12 @@ const testDriveBookingSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    requestedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
     customerName: {
       type: String,
       required: true,

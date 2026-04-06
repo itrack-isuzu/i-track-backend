@@ -1,8 +1,18 @@
 import { Preparation } from '../models/Preparation.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import {
+  notifyPreparationCreated,
+  notifyPreparationUpdated,
+} from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+
+const dispatchNotificationTask = (task, label) => {
+  void task.catch((error) => {
+    console.error(`Notification dispatch failed (${label}):`, error);
+  });
+};
 
 const preparationPopulation = [
   {
@@ -65,6 +75,22 @@ const requireDispatcher = async (dispatcherId) => {
   return dispatcher;
 };
 
+const requireOptionalRequester = async (requesterId) => {
+  if (!requesterId) {
+    return null;
+  }
+
+  const requester = await User.findById(requesterId);
+
+  if (!requester) {
+    const error = new Error('Requester not found.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return requester;
+};
+
 const requirePreparation = async (id) => {
   const preparation = await Preparation.findById(id).populate(
     preparationPopulation
@@ -83,6 +109,7 @@ const validatePayload = async (payload) => {
   await Promise.all([
     requireVehicle(payload.vehicleId),
     requireDispatcher(payload.dispatcherId),
+    requireOptionalRequester(payload.requestedByUserId),
   ]);
 };
 
@@ -110,6 +137,10 @@ export const createPreparation = asyncHandler(async (req, res) => {
   await validatePayload(req.body ?? {});
   const preparation = await Preparation.create(req.body);
   const savedPreparation = await requirePreparation(preparation.id);
+  dispatchNotificationTask(
+    notifyPreparationCreated(savedPreparation),
+    'preparation create'
+  );
 
   sendSuccess(res, {
     status: 201,
@@ -119,6 +150,7 @@ export const createPreparation = asyncHandler(async (req, res) => {
 });
 
 export const updatePreparation = asyncHandler(async (req, res) => {
+  const previousPreparation = await requirePreparation(req.params.id);
   const existingPreparation = await Preparation.findById(req.params.id);
 
   if (!existingPreparation) {
@@ -133,6 +165,10 @@ export const updatePreparation = asyncHandler(async (req, res) => {
       req.body?.dispatcherId === undefined
         ? existingPreparation.dispatcherId
         : req.body.dispatcherId,
+    requestedByUserId:
+      req.body?.requestedByUserId === undefined
+        ? existingPreparation.requestedByUserId
+        : req.body.requestedByUserId,
   });
 
   await Preparation.findByIdAndUpdate(req.params.id, req.body, {
@@ -141,6 +177,13 @@ export const updatePreparation = asyncHandler(async (req, res) => {
   });
 
   const savedPreparation = await requirePreparation(req.params.id);
+  dispatchNotificationTask(
+    notifyPreparationUpdated({
+      previousPreparation,
+      nextPreparation: savedPreparation,
+    }),
+    'preparation update'
+  );
 
   sendSuccess(res, {
     data: savedPreparation,

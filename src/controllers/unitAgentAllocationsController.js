@@ -1,8 +1,18 @@
 import { UnitAgentAllocation } from '../models/UnitAgentAllocation.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import {
+  notifyUnitAgentAllocationCreated,
+  notifyUnitAgentAllocationUpdated,
+} from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+
+const dispatchNotificationTask = (task, label) => {
+  void task.catch((error) => {
+    console.error(`Notification dispatch failed (${label}):`, error);
+  });
+};
 
 const allocationPopulation = [
   {
@@ -138,6 +148,10 @@ export const createUnitAgentAllocation = asyncHandler(async (req, res) => {
   });
 
   const savedAllocation = await requireAllocation(allocation.id);
+  dispatchNotificationTask(
+    notifyUnitAgentAllocationCreated(savedAllocation),
+    'unit agent allocation create'
+  );
 
   sendSuccess(res, {
     status: 201,
@@ -147,7 +161,7 @@ export const createUnitAgentAllocation = asyncHandler(async (req, res) => {
 });
 
 export const updateUnitAgentAllocation = asyncHandler(async (req, res) => {
-  await requireAllocation(req.params.id);
+  const existingAllocation = await requireAllocation(req.params.id);
   const payload = await validatePayload({
     ...(req.body ?? {}),
     currentId: req.params.id,
@@ -166,6 +180,13 @@ export const updateUnitAgentAllocation = asyncHandler(async (req, res) => {
   );
 
   const savedAllocation = await requireAllocation(req.params.id);
+  dispatchNotificationTask(
+    notifyUnitAgentAllocationUpdated({
+      previousAllocation: existingAllocation,
+      nextAllocation: savedAllocation,
+    }),
+    'unit agent allocation update'
+  );
 
   sendSuccess(res, {
     data: savedAllocation,

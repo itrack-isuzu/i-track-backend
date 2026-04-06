@@ -1,7 +1,18 @@
 import { TestDriveBooking } from '../models/TestDriveBooking.js';
+import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import {
+  notifyTestDriveCreated,
+  notifyTestDriveUpdated,
+} from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+
+const dispatchNotificationTask = (task, label) => {
+  void task.catch((error) => {
+    console.error(`Notification dispatch failed (${label}):`, error);
+  });
+};
 
 const bookingPopulation = [
   {
@@ -34,6 +45,22 @@ const requireVehicle = async (vehicleId) => {
   }
 
   return vehicle;
+};
+
+const requireOptionalRequester = async (requesterId) => {
+  if (!requesterId) {
+    return null;
+  }
+
+  const requester = await User.findById(requesterId);
+
+  if (!requester) {
+    const error = new Error('Requester not found.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return requester;
 };
 
 const requireBooking = async (id) => {
@@ -69,9 +96,16 @@ export const getTestDriveBookingById = asyncHandler(async (req, res) => {
 });
 
 export const createTestDriveBooking = asyncHandler(async (req, res) => {
-  await requireVehicle(req.body?.vehicleId);
+  await Promise.all([
+    requireVehicle(req.body?.vehicleId),
+    requireOptionalRequester(req.body?.requestedByUserId),
+  ]);
   const booking = await TestDriveBooking.create(req.body);
   const savedBooking = await requireBooking(booking.id);
+  dispatchNotificationTask(
+    notifyTestDriveCreated(savedBooking),
+    'test drive create'
+  );
 
   sendSuccess(res, {
     status: 201,
@@ -81,6 +115,7 @@ export const createTestDriveBooking = asyncHandler(async (req, res) => {
 });
 
 export const updateTestDriveBooking = asyncHandler(async (req, res) => {
+  const previousBooking = await requireBooking(req.params.id);
   const existingBooking = await TestDriveBooking.findById(req.params.id);
 
   if (!existingBooking) {
@@ -89,7 +124,14 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  await requireVehicle(req.body?.vehicleId ?? existingBooking.vehicleId);
+  await Promise.all([
+    requireVehicle(req.body?.vehicleId ?? existingBooking.vehicleId),
+    requireOptionalRequester(
+      req.body?.requestedByUserId === undefined
+        ? existingBooking.requestedByUserId
+        : req.body.requestedByUserId
+    ),
+  ]);
 
   await TestDriveBooking.findByIdAndUpdate(req.params.id, req.body, {
     new: true,
@@ -97,6 +139,13 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
   });
 
   const savedBooking = await requireBooking(req.params.id);
+  dispatchNotificationTask(
+    notifyTestDriveUpdated({
+      previousBooking,
+      nextBooking: savedBooking,
+    }),
+    'test drive update'
+  );
 
   sendSuccess(res, {
     data: savedBooking,

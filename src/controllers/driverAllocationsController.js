@@ -2,8 +2,18 @@ import { ACTIVE_ALLOCATION_STATUSES } from '../constants/enums.js';
 import { DriverAllocation } from '../models/DriverAllocation.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import {
+  notifyDriverAllocationCreated,
+  notifyDriverAllocationUpdated,
+} from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+
+const dispatchNotificationTask = (task, label) => {
+  void task.catch((error) => {
+    console.error(`Notification dispatch failed (${label}):`, error);
+  });
+};
 
 const allocationPopulation = [
   {
@@ -227,6 +237,10 @@ export const createDriverAllocation = asyncHandler(async (req, res) => {
   await reconcileVehicleStatus(payload.vehicleId);
 
   const savedAllocation = await requireAllocation(allocation.id);
+  dispatchNotificationTask(
+    notifyDriverAllocationCreated(savedAllocation),
+    'driver allocation create'
+  );
 
   sendSuccess(res, {
     status: 201,
@@ -236,6 +250,7 @@ export const createDriverAllocation = asyncHandler(async (req, res) => {
 });
 
 export const updateDriverAllocation = asyncHandler(async (req, res) => {
+  const previousAllocation = await requireAllocation(req.params.id);
   const existingAllocation = await DriverAllocation.findById(req.params.id);
 
   if (!existingAllocation) {
@@ -262,6 +277,13 @@ export const updateDriverAllocation = asyncHandler(async (req, res) => {
   ]);
 
   const savedAllocation = await requireAllocation(req.params.id);
+  dispatchNotificationTask(
+    notifyDriverAllocationUpdated({
+      previousAllocation,
+      nextAllocation: savedAllocation,
+    }),
+    'driver allocation update'
+  );
 
   sendSuccess(res, {
     data: savedAllocation,

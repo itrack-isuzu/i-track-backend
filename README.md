@@ -39,6 +39,7 @@ Add these variables to `.env`:
 - `EMAILJS_PRIVATE_KEY` (optional, but recommended for server-side requests)
 - `EMAILJS_APP_NAME`
 - `EMAILJS_SUPPORT_EMAIL`
+- `EXPO_ACCESS_TOKEN` (optional; only needed if your Expo project enforces authenticated push sends)
 - `PASSWORD_RESET_OTP_EXPIRES_MINUTES`
 - `PASSWORD_RESET_OTP_COOLDOWN_SECONDS`
 - `PASSWORD_RESET_OTP_MAX_ATTEMPTS`
@@ -75,6 +76,9 @@ Your EmailJS template can use these template params:
 - `POST /api/auth/forgot-password/request-otp`
 - `POST /api/auth/forgot-password/verify-otp`
 - `POST /api/auth/forgot-password/reset`
+- `GET /api/notifications?userId=:userId`
+- `POST /api/notifications/push-token`
+- `PATCH /api/notifications/read-all`
 - `GET /api/driver-allocations`
 - `POST /api/driver-allocations`
 - `POST /api/setup/seed`

@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 
 import authRoutes from './authRoutes.js';
 import driverAllocationsRoutes from './driverAllocationsRoutes.js';
+import notificationsRoutes from './notificationsRoutes.js';
 import preparationsRoutes from './preparationsRoutes.js';
 import setupRoutes from './setupRoutes.js';
 import testDriveBookingsRoutes from './testDriveBookingsRoutes.js';
@@ -36,6 +37,7 @@ router.use('/auth', authRoutes);
 router.use('/users', usersRoutes);
 router.use('/vehicles', vehiclesRoutes);
 router.use('/driver-allocations', driverAllocationsRoutes);
+router.use('/notifications', notificationsRoutes);
 router.use('/unit-agent-allocations', unitAgentAllocationsRoutes);
 router.use('/preparations', preparationsRoutes);
 router.use('/test-drive-bookings', testDriveBookingsRoutes);

@@ -1,6 +1,9 @@
 import mongoose from 'mongoose';
 
-import { USER_ROLES } from '../constants/enums.js';
+import {
+  PUSH_TOKEN_PLATFORMS,
+  USER_ROLES,
+} from '../constants/enums.js';
 import { baseSchemaOptions } from '../utils/schemaOptions.js';
 
 const passwordResetSchema = new mongoose.Schema(
@@ -20,6 +23,43 @@ const passwordResetSchema = new mongoose.Schema(
     attempts: {
       type: Number,
       default: 0,
+    },
+  },
+  {
+    _id: false,
+    id: false,
+  }
+);
+
+const pushTokenSchema = new mongoose.Schema(
+  {
+    token: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    platform: {
+      type: String,
+      enum: PUSH_TOKEN_PLATFORMS,
+      default: 'unknown',
+    },
+    deviceName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    projectId: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    lastRegisteredAt: {
+      type: Date,
+      default: () => new Date(),
     },
   },
   {
@@ -88,6 +128,10 @@ const userSchema = new mongoose.Schema(
       type: passwordResetSchema,
       select: false,
       default: undefined,
+    },
+    pushTokens: {
+      type: [pushTokenSchema],
+      default: [],
     },
   },
   baseSchemaOptions
