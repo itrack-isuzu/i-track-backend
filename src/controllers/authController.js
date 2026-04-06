@@ -15,7 +15,10 @@ import { verifyPassword, hashPassword } from '../utils/passwords.js';
 import { env } from '../config/env.js';
 
 const PASSWORD_RESET_REQUEST_MESSAGE =
-  'If an active account exists for that email, we sent a 6-digit OTP code.';
+  'A 6-digit OTP code has been sent to your registered email address.';
+const PASSWORD_RESET_EMAIL_VALIDATION_MESSAGE =
+  'Enter an active registered email address.';
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const createHttpError = (message, statusCode = 400) => {
   const error = new Error(message);
@@ -28,7 +31,7 @@ const normalizeEmail = (email) => String(email ?? '').trim().toLowerCase();
 const ensureValidEmail = (email) => {
   const normalizedEmail = normalizeEmail(email);
 
-  if (!normalizedEmail || !normalizedEmail.includes('@')) {
+  if (!normalizedEmail || !EMAIL_PATTERN.test(normalizedEmail)) {
     throw createHttpError('Enter a valid email address.');
   }
 
@@ -182,10 +185,7 @@ export const requestPasswordResetOtp = asyncHandler(async (req, res) => {
   });
 
   if (!user || !user.isActive) {
-    sendSuccess(res, {
-      message: PASSWORD_RESET_REQUEST_MESSAGE,
-    });
-    return;
+    throw createHttpError(PASSWORD_RESET_EMAIL_VALIDATION_MESSAGE);
   }
 
   const lastSentAt = user.passwordReset?.lastSentAt?.getTime() ?? 0;
