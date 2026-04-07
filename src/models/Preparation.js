@@ -136,6 +136,19 @@ const preparationSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    completionSmsSentAt: {
+      type: Date,
+      default: null,
+    },
+    completionSmsDispatchStartedAt: {
+      type: Date,
+      default: null,
+    },
+    completionSmsLastError: {
+      type: String,
+      default: null,
+      trim: true,
+    },
   },
   baseSchemaOptions
 );

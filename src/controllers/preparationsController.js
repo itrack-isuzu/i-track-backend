@@ -6,6 +6,7 @@ import {
   notifyPreparationDeleted,
   notifyPreparationUpdated,
 } from '../services/notificationDispatchers.js';
+import { sendPreparationCompletionSms } from '../services/smsService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import {
@@ -50,6 +51,256 @@ const buildFilters = (query) => {
   }
 
   return filters;
+};
+
+const lockedPreparationStatuses = new Set([
+  'in_dispatch',
+  'completed',
+  'ready_for_release',
+]);
+
+const completionSmsEligibleStatuses = new Set([
+  'completed',
+]);
+
+const toOptionalDate = (value) => {
+  if (!value) {
+    return null;
+  }
+
+  const parsedDate = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const normalizePreparationStatusDates = ({
+  status,
+  completedAt,
+  readyForReleaseAt,
+  completionFallbackDate,
+  readyForReleaseFallbackDate,
+}) => {
+  const resolvedCompletedAt = toOptionalDate(completedAt);
+  const resolvedReadyForReleaseAt = toOptionalDate(readyForReleaseAt);
+  const resolvedCompletionFallbackDate =
+    toOptionalDate(completionFallbackDate) ?? new Date();
+  const resolvedReadyForReleaseFallbackDate =
+    toOptionalDate(readyForReleaseFallbackDate) ??
+    resolvedCompletionFallbackDate;
+
+  if (status === 'completed') {
+    const normalizedReadyForReleaseAt =
+      resolvedReadyForReleaseAt ??
+      resolvedReadyForReleaseFallbackDate ??
+      resolvedCompletedAt ??
+      new Date();
+
+    return {
+      completedAt:
+        resolvedCompletedAt ?? resolvedCompletionFallbackDate ?? new Date(),
+      readyForReleaseAt: normalizedReadyForReleaseAt,
+    };
+  }
+
+  if (status === 'ready_for_release') {
+    return {
+      completedAt: null,
+      readyForReleaseAt:
+        resolvedReadyForReleaseAt ??
+        resolvedReadyForReleaseFallbackDate ??
+        resolvedCompletedAt ??
+        new Date(),
+    };
+  }
+
+  return {
+    completedAt: null,
+    readyForReleaseAt: null,
+  };
+};
+
+const normalizeArrayValues = (value) =>
+  Array.isArray(value)
+    ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
+    : [];
+
+const normalizeOptionalText = (value) => String(value ?? '').trim();
+
+const getPreparationVehicleLabel = (preparation) =>
+  [
+    preparation?.vehicleId?.unitName,
+    preparation?.vehicleId?.variation,
+    preparation?.vehicleId?.conductionNumber,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .trim() || 'your vehicle';
+
+const ensurePreparationVehicleAvailable = (vehicle) => {
+  if (vehicle?.status === 'available') {
+    return;
+  }
+
+  const error = new Error(
+    'Only vehicles with Available status can be used for preparation.'
+  );
+  error.statusCode = 400;
+  throw error;
+};
+
+const hasEditablePreparationFieldChanges = ({
+  existingPreparation,
+  nextPayload,
+}) => {
+  if (String(existingPreparation.vehicleId) !== String(nextPayload.vehicleId)) {
+    return true;
+  }
+
+  if (
+    normalizeOptionalText(existingPreparation.customerName) !==
+    normalizeOptionalText(nextPayload.customerName)
+  ) {
+    return true;
+  }
+
+  if (
+    normalizeOptionalText(existingPreparation.customerContactNo) !==
+    normalizeOptionalText(nextPayload.customerContactNo)
+  ) {
+    return true;
+  }
+
+  if (
+    normalizeOptionalText(existingPreparation.notes) !==
+    normalizeOptionalText(nextPayload.notes)
+  ) {
+    return true;
+  }
+
+  if (
+    normalizeArrayValues(existingPreparation.requestedServices).join('|') !==
+    normalizeArrayValues(nextPayload.requestedServices).join('|')
+  ) {
+    return true;
+  }
+
+  return (
+    normalizeArrayValues(existingPreparation.customRequests).join('|') !==
+    normalizeArrayValues(nextPayload.customRequests).join('|')
+  );
+};
+
+const ensurePreparationEditAllowed = ({ existingPreparation, nextPayload }) => {
+  if (!lockedPreparationStatuses.has(existingPreparation.status)) {
+    return;
+  }
+
+  if (!hasEditablePreparationFieldChanges({ existingPreparation, nextPayload })) {
+    return;
+  }
+
+  const error = new Error(
+    'Preparation records in In Dispatch, Completed, or Ready for Release status can no longer be edited.'
+  );
+  error.statusCode = 409;
+  throw error;
+};
+
+const shouldSendPreparationCompletionSms = ({
+  previousPreparation,
+  nextPreparation,
+}) => {
+  if (
+    !nextPreparation?.customerContactNo ||
+    nextPreparation?.completionSmsSentAt ||
+    nextPreparation?.completionSmsDispatchStartedAt
+  ) {
+    return false;
+  }
+
+  if (!completionSmsEligibleStatuses.has(nextPreparation?.status)) {
+    return false;
+  }
+
+  return previousPreparation?.status !== nextPreparation?.status;
+};
+
+const syncPreparationCompletionSms = async ({
+  previousPreparation,
+  nextPreparation,
+}) => {
+  if (
+    !shouldSendPreparationCompletionSms({
+      previousPreparation,
+      nextPreparation,
+    })
+  ) {
+    return null;
+  }
+
+  try {
+    const claimedPreparation = await Preparation.findOneAndUpdate(
+      {
+        _id: nextPreparation.id,
+        completionSmsSentAt: null,
+        completionSmsDispatchStartedAt: null,
+      },
+      {
+        completionSmsDispatchStartedAt: new Date(),
+        completionSmsLastError: null,
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!claimedPreparation) {
+      return null;
+    }
+
+    const smsResult = await sendPreparationCompletionSms({
+      customerName: nextPreparation.customerName,
+      phoneNumber: nextPreparation.customerContactNo,
+      vehicleLabel: getPreparationVehicleLabel(nextPreparation),
+    });
+
+    if (smsResult?.skipped) {
+      await Preparation.findByIdAndUpdate(nextPreparation.id, {
+        completionSmsDispatchStartedAt: null,
+      });
+
+      return smsResult;
+    }
+
+    await Preparation.findByIdAndUpdate(nextPreparation.id, {
+      completionSmsSentAt: new Date(),
+      completionSmsDispatchStartedAt: null,
+      completionSmsLastError: null,
+    });
+
+    return smsResult;
+  } catch (error) {
+    await Preparation.findByIdAndUpdate(nextPreparation.id, {
+      completionSmsDispatchStartedAt: null,
+      completionSmsLastError:
+        String(error?.message ?? error ?? 'Unable to send SMS.').trim() ||
+        'Unable to send SMS.',
+    }).catch(() => undefined);
+
+    throw error;
+  }
+};
+
+const dispatchPreparationCompletionSmsTask = ({
+  previousPreparation,
+  nextPreparation,
+}) => {
+  dispatchNotificationTask(
+    syncPreparationCompletionSms({
+      previousPreparation,
+      nextPreparation,
+    }),
+    'preparation completion sms'
+  );
 };
 
 const requireVehicle = async (vehicleId) => {
@@ -171,12 +422,19 @@ const buildValidatedPayload = async ({
   };
 };
 
-const validatePayload = async (payload) => {
-  await Promise.all([
+const validatePayload = async (
+  payload,
+  { requireAvailableVehicle = false } = {}
+) => {
+  const [vehicle] = await Promise.all([
     requireVehicle(payload.vehicleId),
     requireDispatcher(payload.dispatcherId),
     requireOptionalRequester(payload.requestedByUserId),
   ]);
+
+  if (requireAvailableVehicle) {
+    ensurePreparationVehicleAvailable(vehicle);
+  }
 };
 
 export const listPreparations = asyncHandler(async (req, res) => {
@@ -201,13 +459,27 @@ export const getPreparationById = asyncHandler(async (req, res) => {
 
 export const createPreparation = asyncHandler(async (req, res) => {
   const validatedPayload = await buildValidatedPayload(req.body ?? {});
-  await validatePayload(validatedPayload);
-  const preparation = await Preparation.create(validatedPayload);
+  const normalizedPayload = {
+    ...validatedPayload,
+    ...normalizePreparationStatusDates({
+      status: validatedPayload.status,
+      completedAt: validatedPayload.completedAt,
+      readyForReleaseAt: validatedPayload.readyForReleaseAt,
+    }),
+  };
+  await validatePayload(normalizedPayload, {
+    requireAvailableVehicle: true,
+  });
+  const preparation = await Preparation.create(normalizedPayload);
   const savedPreparation = await requirePreparation(preparation.id);
   dispatchNotificationTask(
     notifyPreparationCreated(savedPreparation),
     'preparation create'
   );
+  dispatchPreparationCompletionSmsTask({
+    previousPreparation: null,
+    nextPreparation: savedPreparation,
+  });
 
   sendSuccess(res, {
     status: 201,
@@ -265,9 +537,29 @@ export const updatePreparation = asyncHandler(async (req, res) => {
         ? existingPreparation.requestedByUserId
         : req.body.requestedByUserId,
   });
-  await validatePayload(validatedPayload);
+  const normalizedPayload = {
+    ...validatedPayload,
+    ...normalizePreparationStatusDates({
+      status: validatedPayload.status,
+      completedAt: validatedPayload.completedAt,
+      readyForReleaseAt: validatedPayload.readyForReleaseAt,
+      completionFallbackDate: existingPreparation.completedAt ?? new Date(),
+      readyForReleaseFallbackDate:
+        existingPreparation.readyForReleaseAt ??
+        existingPreparation.completedAt ??
+        new Date(),
+    }),
+  };
+  ensurePreparationEditAllowed({
+    existingPreparation,
+    nextPayload: normalizedPayload,
+  });
+  await validatePayload(normalizedPayload, {
+    requireAvailableVehicle:
+      String(normalizedPayload.vehicleId) !== String(existingPreparation.vehicleId),
+  });
 
-  await Preparation.findByIdAndUpdate(req.params.id, validatedPayload, {
+  await Preparation.findByIdAndUpdate(req.params.id, normalizedPayload, {
     new: true,
     runValidators: true,
   });
@@ -280,6 +572,10 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     }),
     'preparation update'
   );
+  dispatchPreparationCompletionSmsTask({
+    previousPreparation,
+    nextPreparation: savedPreparation,
+  });
 
   sendSuccess(res, {
     data: savedPreparation,

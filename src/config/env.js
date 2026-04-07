@@ -59,6 +59,32 @@ export const env = {
   emailjsAppName: process.env.EMAILJS_APP_NAME?.trim() || 'I-TRACK',
   emailjsSupportEmail: toOptionalString(process.env.EMAILJS_SUPPORT_EMAIL),
   expoAccessToken: toOptionalString(process.env.EXPO_ACCESS_TOKEN),
+  smsEnabled: toBoolean(process.env.SMS_ENABLED, true),
+  smsProvider:
+    toOptionalString(process.env.SMS_PROVIDER)?.toLowerCase() ??
+    (process.env.FMCSMS_USERNAME ||
+    process.env.FMCSMS_PASSWORD ||
+    process.env.FMCSMS_API_KEY
+      ? 'fmcsms'
+      : 'twilio'),
+  fmcsmsApiUrl:
+    toOptionalString(process.env.FMCSMS_API_URL) ??
+    'http://www.ciedco-sms.net/api/sendsms.php',
+  fmcsmsUsername: toOptionalString(
+    process.env.FMCSMS_USERNAME ?? process.env.FMCSMS_API_USERNAME
+  ),
+  fmcsmsPassword: toOptionalString(
+    process.env.FMCSMS_PASSWORD ?? process.env.FMCSMS_API_KEY
+  ),
+  fmcsmsSenderId: toOptionalString(
+    process.env.FMCSMS_SENDER_ID ?? process.env.FMCSMS_SENDER
+  ),
+  twilioAccountSid: toOptionalString(process.env.TWILIO_ACCOUNT_SID),
+  twilioAuthToken: toOptionalString(process.env.TWILIO_AUTH_TOKEN),
+  twilioMessagingServiceSid: toOptionalString(
+    process.env.TWILIO_MESSAGING_SERVICE_SID
+  ),
+  twilioFromNumber: toOptionalString(process.env.TWILIO_FROM_NUMBER),
   passwordResetOtpExpiresMinutes: toNumber(
     process.env.PASSWORD_RESET_OTP_EXPIRES_MINUTES,
     10
