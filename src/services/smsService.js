@@ -67,6 +67,19 @@ const parseJsonSafely = (value) => {
   }
 };
 
+const isSuccessfulFmcsmsResponse = (rawResponseBody, responseBody) => {
+  const normalizedBody = String(rawResponseBody ?? '').trim();
+  const normalizedJsonMessage = String(
+    responseBody?.message ?? responseBody?.status ?? responseBody?.detail ?? ''
+  ).trim();
+
+  const successPatterns = [/^1701$/, /^111[123](:|$)/i, /\b(success|queued)\b/i];
+
+  return [normalizedBody, normalizedJsonMessage].some((candidate) =>
+    successPatterns.some((pattern) => pattern.test(candidate))
+  );
+};
+
 const sendPreparationCompletionSmsViaFmcsms = async ({
   customerName,
   phoneNumber,
@@ -125,12 +138,14 @@ const sendPreparationCompletionSmsViaFmcsms = async ({
     throw new Error(`FMCSMS returned code ${rawResponseBody}.`);
   }
 
-  if (
-    rawResponseBody &&
-    /(error|invalid|failed)/i.test(rawResponseBody) &&
-    !/(success|queued)/i.test(rawResponseBody)
-  ) {
+  if (rawResponseBody && /(error|invalid|failed)/i.test(rawResponseBody)) {
     throw new Error(rawResponseBody);
+  }
+
+  if (!isSuccessfulFmcsmsResponse(rawResponseBody, responseBody)) {
+    throw new Error(
+      rawResponseBody || 'FMCSMS returned an unexpected response.'
+    );
   }
 
   return {
