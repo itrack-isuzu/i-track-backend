@@ -1,5 +1,7 @@
 import { env } from '../config/env.js';
-import { normalizePhoneNumber } from '../utils/phoneNumbers.js';
+
+const normalizeSmsDigits = (value) =>
+  String(value ?? '').replace(/\D/g, '');
 
 const buildPreparationCompletionMessage = ({
   customerName,
@@ -12,7 +14,7 @@ const buildPreparationCompletionMessage = ({
 };
 
 const toPhilippineE164 = (value) => {
-  const normalizedPhoneNumber = normalizePhoneNumber(value);
+  const normalizedPhoneNumber = normalizeSmsDigits(value);
 
   if (!normalizedPhoneNumber) {
     return '';
@@ -35,7 +37,27 @@ const toPhilippineE164 = (value) => {
     : normalizedPhoneNumber;
 };
 
-const toLocalMobileNumber = (value) => normalizePhoneNumber(value);
+const toFmcsmsMobileNumber = (value) => {
+  const normalizedPhoneNumber = normalizeSmsDigits(value);
+
+  if (!normalizedPhoneNumber) {
+    return '';
+  }
+
+  if (normalizedPhoneNumber.startsWith('09') && normalizedPhoneNumber.length === 11) {
+    return `63${normalizedPhoneNumber.slice(1)}`;
+  }
+
+  if (normalizedPhoneNumber.startsWith('63') && normalizedPhoneNumber.length === 12) {
+    return normalizedPhoneNumber;
+  }
+
+  if (normalizedPhoneNumber.startsWith('9') && normalizedPhoneNumber.length === 10) {
+    return `63${normalizedPhoneNumber}`;
+  }
+
+  return normalizedPhoneNumber;
+};
 
 const getTwilioEndpoint = () =>
   `https://api.twilio.com/2010-04-01/Accounts/${env.twilioAccountSid}/Messages.json`;
@@ -96,9 +118,9 @@ const sendPreparationCompletionSmsViaFmcsms = async ({
     };
   }
 
-  const smsRecipient = toLocalMobileNumber(phoneNumber);
+  const smsRecipient = toFmcsmsMobileNumber(phoneNumber);
 
-  if (!smsRecipient.startsWith('09') || smsRecipient.length !== 11) {
+  if (!smsRecipient.startsWith('639') || smsRecipient.length !== 12) {
     throw new Error('Customer contact number is not in a supported SMS format.');
   }
 

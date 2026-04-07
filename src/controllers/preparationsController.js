@@ -63,6 +63,12 @@ const completionSmsEligibleStatuses = new Set([
   'completed',
 ]);
 
+const activePreparationVehicleStatuses = new Set([
+  'pending',
+  'in_dispatch',
+  'ready_for_release',
+]);
+
 const toOptionalDate = (value) => {
   if (!value) {
     return null;
@@ -144,6 +150,27 @@ const ensurePreparationVehicleAvailable = (vehicle) => {
   );
   error.statusCode = 400;
   throw error;
+};
+
+const reconcilePreparationVehicleStatus = async (vehicleId) => {
+  if (!vehicleId) {
+    return;
+  }
+
+  const latestActivePreparation = await Preparation.findOne({
+    vehicleId,
+    status: { $in: [...activePreparationVehicleStatuses] },
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .select('_id');
+
+  const nextVehicleStatus = latestActivePreparation
+    ? 'under_preparation'
+    : 'available';
+
+  await Vehicle.findByIdAndUpdate(vehicleId, {
+    status: nextVehicleStatus,
+  });
 };
 
 const hasEditablePreparationFieldChanges = ({
@@ -470,6 +497,7 @@ export const createPreparation = asyncHandler(async (req, res) => {
     requireAvailableVehicle: true,
   });
   const preparation = await Preparation.create(normalizedPayload);
+  await reconcilePreparationVehicleStatus(normalizedPayload.vehicleId);
   const savedPreparation = await requirePreparation(preparation.id);
   dispatchNotificationTask(
     notifyPreparationCreated(savedPreparation),
@@ -563,6 +591,11 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     runValidators: true,
   });
 
+  await Promise.all([
+    reconcilePreparationVehicleStatus(existingPreparation.vehicleId),
+    reconcilePreparationVehicleStatus(normalizedPayload.vehicleId),
+  ]);
+
   const savedPreparation = await requirePreparation(req.params.id);
   dispatchNotificationTask(
     notifyPreparationUpdated({
@@ -591,6 +624,8 @@ export const deletePreparation = asyncHandler(async (req, res) => {
     error.statusCode = 404;
     throw error;
   }
+
+  await reconcilePreparationVehicleStatus(preparation.vehicleId);
 
   dispatchNotificationTask(
     notifyPreparationDeleted(existingPreparation),
