@@ -38,6 +38,24 @@ const requireEnv = (value, key) => {
   return value;
 };
 
+const normalizeSmsProvider = (value) => {
+  const normalizedValue = toOptionalString(value)?.toLowerCase();
+
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  if (normalizedValue.startsWith('fmcsms')) {
+    return 'fmcsms';
+  }
+
+  if (normalizedValue.startsWith('twilio')) {
+    return 'twilio';
+  }
+
+  return normalizedValue;
+};
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: Number(process.env.PORT ?? 4000),
@@ -61,7 +79,7 @@ export const env = {
   expoAccessToken: toOptionalString(process.env.EXPO_ACCESS_TOKEN),
   smsEnabled: toBoolean(process.env.SMS_ENABLED, true),
   smsProvider:
-    toOptionalString(process.env.SMS_PROVIDER)?.toLowerCase() ??
+    normalizeSmsProvider(process.env.SMS_PROVIDER) ??
     (process.env.FMCSMS_USERNAME ||
     process.env.FMCSMS_PASSWORD ||
     process.env.FMCSMS_API_KEY

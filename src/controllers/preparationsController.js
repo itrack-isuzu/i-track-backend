@@ -129,7 +129,6 @@ const getPreparationVehicleLabel = (preparation) =>
   [
     preparation?.vehicleId?.unitName,
     preparation?.vehicleId?.variation,
-    preparation?.vehicleId?.conductionNumber,
   ]
     .filter(Boolean)
     .join(' ')

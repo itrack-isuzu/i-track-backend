@@ -8,7 +8,7 @@ const buildPreparationCompletionMessage = ({
   const resolvedCustomerName = String(customerName ?? '').trim() || 'Customer';
   const resolvedVehicleLabel = String(vehicleLabel ?? '').trim() || 'your vehicle';
 
-  return `Hello ${resolvedCustomerName}, your vehicle preparation card for ${resolvedVehicleLabel} is completed and ready for release.`;
+  return `Hi ${resolvedCustomerName}! Your ${resolvedVehicleLabel} is ready for release. Contact your agent for details. -Isuzu Pasig`;
 };
 
 const toPhilippineE164 = (value) => {
@@ -92,7 +92,7 @@ const sendPreparationCompletionSmsViaFmcsms = async ({
   const endpoint = new URL(getFmcsmsEndpoint());
   endpoint.searchParams.set('username', env.fmcsmsUsername);
   endpoint.searchParams.set('password', env.fmcsmsPassword);
-  endpoint.searchParams.set('sender', env.fmcsmsSenderId);
+  endpoint.searchParams.set('sid', env.fmcsmsSenderId);
   endpoint.searchParams.set('mno', smsRecipient);
   endpoint.searchParams.set(
     'msg',
