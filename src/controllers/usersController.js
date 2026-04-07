@@ -1,7 +1,11 @@
 import { User } from '../models/User.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
-import { hashPassword } from '../utils/passwords.js';
+import {
+  generateTemporaryPassword,
+  hashPassword,
+} from '../utils/passwords.js';
+import { sendUserAccountCredentialsEmail } from '../services/emailjsService.js';
 import {
   ensureUniquePhoneNumber,
   ensureValidPhoneNumber,
@@ -19,6 +23,25 @@ const createHttpError = (message, statusCode = 400) => {
 };
 
 const normalizeEmail = (value) => String(value ?? '').trim().toLowerCase();
+
+const getUserRoleLabel = (role) => {
+  switch (role) {
+    case 'admin':
+      return 'Admin';
+    case 'supervisor':
+      return 'Supervisor';
+    case 'manager':
+      return 'Manager';
+    case 'sales_agent':
+      return 'Sales Agent';
+    case 'dispatcher':
+      return 'Dispatcher';
+    case 'driver':
+      return 'Driver';
+    default:
+      return 'User';
+  }
+};
 
 const normalizeAvatarUrl = (value) => {
   if (value === undefined) {
@@ -147,18 +170,54 @@ export const getUserById = asyncHandler(async (req, res) => {
 });
 
 export const createUser = asyncHandler(async (req, res) => {
-  const { password, ...payload } = req.body ?? {};
+  const {
+    password,
+    sendCredentialsEmail = false,
+    ...payload
+  } = req.body ?? {};
   const validatedPayload = await buildValidatedUserPayload(payload);
+  const normalizedPassword =
+    typeof password === 'string' && password.trim()
+      ? password.trim()
+      : sendCredentialsEmail
+        ? generateTemporaryPassword()
+        : '';
+
+  if (!normalizedPassword) {
+    throw createHttpError(
+      'Password is required when credential email delivery is disabled.'
+    );
+  }
+
   const user = await User.create({
     ...validatedPayload,
-    passwordHash: await hashPassword(password),
+    passwordHash: await hashPassword(normalizedPassword),
   });
+
+  try {
+    if (sendCredentialsEmail) {
+      await sendUserAccountCredentialsEmail({
+        toEmail: validatedPayload.email,
+        toName:
+          `${validatedPayload.firstName ?? ''} ${validatedPayload.lastName ?? ''}`.trim() ||
+          validatedPayload.email,
+        roleLabel: getUserRoleLabel(validatedPayload.role),
+        temporaryPassword: normalizedPassword,
+      });
+    }
+  } catch (error) {
+    await User.findByIdAndDelete(user.id).catch(() => null);
+    throw error;
+  }
+
   const savedUser = await requireUser(user.id);
 
   sendSuccess(res, {
     status: 201,
     data: savedUser,
-    message: 'User created successfully.',
+    message: sendCredentialsEmail
+      ? 'User created successfully and login credentials were sent by email.'
+      : 'User created successfully.',
   });
 });
 

@@ -51,6 +51,9 @@ export const env = {
   autoSeed: toBoolean(process.env.MONGODB_AUTO_SEED, false),
   emailjsServiceId: toOptionalString(process.env.EMAILJS_SERVICE_ID),
   emailjsTemplateId: toOptionalString(process.env.EMAILJS_TEMPLATE_ID),
+  emailjsUserWelcomeTemplateId: toOptionalString(
+    process.env.EMAILJS_USER_WELCOME_TEMPLATE_ID
+  ),
   emailjsPublicKey: toOptionalString(process.env.EMAILJS_PUBLIC_KEY),
   emailjsPrivateKey: toOptionalString(process.env.EMAILJS_PRIVATE_KEY),
   emailjsAppName: process.env.EMAILJS_APP_NAME?.trim() || 'I-TRACK',

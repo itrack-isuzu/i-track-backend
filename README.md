@@ -35,6 +35,7 @@ Add these variables to `.env`:
 
 - `EMAILJS_SERVICE_ID`
 - `EMAILJS_TEMPLATE_ID`
+- `EMAILJS_USER_WELCOME_TEMPLATE_ID` (optional; falls back to `EMAILJS_TEMPLATE_ID`)
 - `EMAILJS_PUBLIC_KEY`
 - `EMAILJS_PRIVATE_KEY` (optional, but recommended for server-side requests)
 - `EMAILJS_APP_NAME`
@@ -60,6 +61,19 @@ Your EmailJS template can use these template params:
 - `to_name`
 - `support_email`
 - `expires_in_minutes`
+
+For new account credential emails, the backend can also send these params:
+
+- `subject`
+- `message`
+- `headline`
+- `role`
+- `user_role`
+- `temporary_password`
+- `generated_password`
+- `password`
+- `login_email`
+- `account_email`
 
 ## Frontend API URLs
 
