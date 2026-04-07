@@ -30,6 +30,7 @@ const allocationPopulation = [
     select: 'unitName variation conductionNumber bodyColor status',
   },
 ];
+const COMPLETED_ALLOCATION_STATUSES = new Set(['completed', 'delivered']);
 
 const buildAllocationFilters = (query) => {
   const filters = {};
@@ -173,6 +174,48 @@ const reconcileVehicleStatus = async (vehicleId) => {
   });
 };
 
+const buildAllocationLifecyclePayload = (existingAllocation, nextPayload) => {
+  const nextStatus = nextPayload.status ?? existingAllocation.status;
+  const lifecyclePayload = {};
+
+  if (
+    nextStatus === 'in_transit' &&
+    !existingAllocation.startTime &&
+    !nextPayload.startTime
+  ) {
+    lifecyclePayload.startTime = new Date();
+  }
+
+  if (
+    COMPLETED_ALLOCATION_STATUSES.has(nextStatus) &&
+    (existingAllocation.status !== nextStatus ||
+      !existingAllocation.endTime ||
+      !existingAllocation.actualDuration)
+  ) {
+    const completionTime = nextPayload.endTime
+      ? new Date(nextPayload.endTime)
+      : new Date();
+    const startTime =
+      lifecyclePayload.startTime ??
+      nextPayload.startTime ??
+      existingAllocation.startTime ??
+      null;
+
+    lifecyclePayload.endTime = completionTime;
+
+    if (startTime) {
+      lifecyclePayload.actualDuration = Math.max(
+        1,
+        Math.round(
+          (completionTime.getTime() - new Date(startTime).getTime()) / 60000
+        )
+      );
+    }
+  }
+
+  return lifecyclePayload;
+};
+
 const prepareAllocationPayload = async (payload, currentAllocationId = null) => {
   const {
     managerId,
@@ -264,8 +307,18 @@ export const updateDriverAllocation = asyncHandler(async (req, res) => {
     ...existingAllocation.toObject(),
     ...req.body,
   };
+  const lifecyclePayload = buildAllocationLifecyclePayload(
+    existingAllocation,
+    nextPayload
+  );
 
-  const payload = await prepareAllocationPayload(nextPayload, existingAllocation.id);
+  const payload = await prepareAllocationPayload(
+    {
+      ...nextPayload,
+      ...lifecyclePayload,
+    },
+    existingAllocation.id
+  );
 
   await DriverAllocation.findByIdAndUpdate(req.params.id, payload, {
     new: true,

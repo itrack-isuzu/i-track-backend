@@ -308,6 +308,54 @@ export const notifyDriverAllocationUpdated = async ({
     }
   }
 
+  if (
+    !managerId &&
+    previousAllocation?.status !== nextAllocation?.status
+  ) {
+    const driverName = getFullName(nextAllocation?.driverId) || 'The driver';
+    let title = '';
+    let message = '';
+
+    switch (nextAllocation?.status) {
+      case 'assigned':
+        title = 'Dispatch accepted';
+        message = `${driverName} accepted ${vehicleLabel}.`;
+        break;
+      case 'in_transit':
+        title = 'Trip started';
+        message = `${driverName} started the trip for ${vehicleLabel}.`;
+        break;
+      case 'completed':
+      case 'delivered':
+        title = 'Trip completed';
+        message = `${driverName} completed the trip for ${vehicleLabel}.`;
+        break;
+      case 'cancelled':
+        title = 'Dispatch cancelled';
+        message = `${driverName} dispatch for ${vehicleLabel} was cancelled.`;
+        break;
+      default:
+        break;
+    }
+
+    if (title && message) {
+      tasks.push(
+        createNotificationsForRoles({
+          roles: ADMIN_APPROVER_ROLES,
+          type: 'driver',
+          title,
+          message,
+          data: {
+            entityType: 'driver_allocation',
+            entityId: nextAllocation.id,
+            vehicleId: getId(nextAllocation?.vehicleId),
+            status: nextAllocation?.status,
+          },
+        })
+      );
+    }
+  }
+
   return Promise.all(tasks);
 };
 
