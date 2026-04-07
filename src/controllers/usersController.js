@@ -74,6 +74,36 @@ const normalizeAvatarUrl = (value) => {
   return normalizedAvatarUrl;
 };
 
+const validateManagerAssignment = async ({ id, role, managerId }) => {
+  if (role !== 'sales_agent') {
+    return null;
+  }
+
+  const normalizedManagerId = String(managerId ?? '').trim();
+
+  if (!normalizedManagerId) {
+    throw createHttpError('Sales agents must be assigned to a manager.');
+  }
+
+  if (id && String(id) === normalizedManagerId) {
+    throw createHttpError('Sales agents cannot be assigned to themselves.');
+  }
+
+  const manager = await User.findById(normalizedManagerId);
+
+  if (!manager) {
+    throw createHttpError('Selected manager was not found.');
+  }
+
+  if (manager.role !== 'manager') {
+    throw createHttpError(
+      'Sales agents must be assigned to a user with the Manager role.'
+    );
+  }
+
+  return manager.id;
+};
+
 const buildValidatedUserPayload = async ({
   id,
   email,
@@ -87,6 +117,11 @@ const buildValidatedUserPayload = async ({
   avatarUrl,
 }) => {
   const normalizedPhoneNumber = ensureValidPhoneNumber(phone);
+  const validatedManagerId = await validateManagerAssignment({
+    id,
+    role,
+    managerId,
+  });
 
   await ensureUniquePhoneNumber({
     model: User,
@@ -104,7 +139,7 @@ const buildValidatedUserPayload = async ({
       typeof lastName === 'string' ? lastName.trim() : lastName,
     bio: typeof bio === 'string' ? bio.trim() : bio,
     role,
-    managerId: managerId ?? null,
+    managerId: validatedManagerId,
     isActive,
     avatarUrl: normalizeAvatarUrl(avatarUrl),
   };
