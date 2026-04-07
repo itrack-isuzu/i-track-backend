@@ -3,10 +3,15 @@ import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import {
   notifyTestDriveCreated,
+  notifyTestDriveDeleted,
   notifyTestDriveUpdated,
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import {
+  ensureUniquePhoneNumber,
+  ensureValidPhoneNumber,
+} from '../utils/phoneNumbers.js';
 
 const dispatchNotificationTask = (task, label) => {
   void task.catch((error) => {
@@ -75,6 +80,45 @@ const requireBooking = async (id) => {
   return booking;
 };
 
+const buildValidatedPayload = async ({
+  id,
+  vehicleId,
+  requestedByUserId,
+  customerName,
+  customerPhone,
+  scheduledDate,
+  scheduledTime,
+  notes,
+  status,
+}) => {
+  const normalizedPhoneNumber = ensureValidPhoneNumber(
+    customerPhone,
+    'Customer phone number'
+  );
+
+  await ensureUniquePhoneNumber({
+    model: TestDriveBooking,
+    field: 'customerPhone',
+    value: normalizedPhoneNumber,
+    excludeId: id,
+    label: 'Customer phone number',
+  });
+
+  return {
+    vehicleId,
+    requestedByUserId: requestedByUserId ?? null,
+    customerName:
+      typeof customerName === 'string' ? customerName.trim() : customerName,
+    customerPhone: normalizedPhoneNumber,
+    scheduledDate:
+      typeof scheduledDate === 'string' ? scheduledDate.trim() : scheduledDate,
+    scheduledTime:
+      typeof scheduledTime === 'string' ? scheduledTime.trim() : scheduledTime,
+    notes: typeof notes === 'string' ? notes.trim() : notes,
+    status,
+  };
+};
+
 export const listTestDriveBookings = asyncHandler(async (req, res) => {
   const bookings = await TestDriveBooking.find(buildFilters(req.query))
     .populate(bookingPopulation)
@@ -96,11 +140,12 @@ export const getTestDriveBookingById = asyncHandler(async (req, res) => {
 });
 
 export const createTestDriveBooking = asyncHandler(async (req, res) => {
+  const validatedPayload = await buildValidatedPayload(req.body ?? {});
   await Promise.all([
-    requireVehicle(req.body?.vehicleId),
-    requireOptionalRequester(req.body?.requestedByUserId),
+    requireVehicle(validatedPayload.vehicleId),
+    requireOptionalRequester(validatedPayload.requestedByUserId),
   ]);
-  const booking = await TestDriveBooking.create(req.body);
+  const booking = await TestDriveBooking.create(validatedPayload);
   const savedBooking = await requireBooking(booking.id);
   dispatchNotificationTask(
     notifyTestDriveCreated(savedBooking),
@@ -124,16 +169,27 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  await Promise.all([
-    requireVehicle(req.body?.vehicleId ?? existingBooking.vehicleId),
-    requireOptionalRequester(
+  const validatedPayload = await buildValidatedPayload({
+    id: existingBooking.id,
+    vehicleId: req.body?.vehicleId ?? existingBooking.vehicleId,
+    requestedByUserId:
       req.body?.requestedByUserId === undefined
         ? existingBooking.requestedByUserId
-        : req.body.requestedByUserId
-    ),
+        : req.body.requestedByUserId,
+    customerName: req.body?.customerName ?? existingBooking.customerName,
+    customerPhone: req.body?.customerPhone ?? existingBooking.customerPhone,
+    scheduledDate: req.body?.scheduledDate ?? existingBooking.scheduledDate,
+    scheduledTime: req.body?.scheduledTime ?? existingBooking.scheduledTime,
+    notes: req.body?.notes ?? existingBooking.notes,
+    status: req.body?.status ?? existingBooking.status,
+  });
+
+  await Promise.all([
+    requireVehicle(validatedPayload.vehicleId),
+    requireOptionalRequester(validatedPayload.requestedByUserId),
   ]);
 
-  await TestDriveBooking.findByIdAndUpdate(req.params.id, req.body, {
+  await TestDriveBooking.findByIdAndUpdate(req.params.id, validatedPayload, {
     new: true,
     runValidators: true,
   });
@@ -154,6 +210,7 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
 });
 
 export const deleteTestDriveBooking = asyncHandler(async (req, res) => {
+  const existingBooking = await requireBooking(req.params.id);
   const booking = await TestDriveBooking.findByIdAndDelete(req.params.id);
 
   if (!booking) {
@@ -161,6 +218,11 @@ export const deleteTestDriveBooking = asyncHandler(async (req, res) => {
     error.statusCode = 404;
     throw error;
   }
+
+  dispatchNotificationTask(
+    notifyTestDriveDeleted(existingBooking),
+    'test drive delete'
+  );
 
   sendSuccess(res, {
     data: booking,

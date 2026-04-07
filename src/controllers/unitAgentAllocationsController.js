@@ -3,6 +3,7 @@ import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import {
   notifyUnitAgentAllocationCreated,
+  notifyUnitAgentAllocationDeleted,
   notifyUnitAgentAllocationUpdated,
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -195,6 +196,7 @@ export const updateUnitAgentAllocation = asyncHandler(async (req, res) => {
 });
 
 export const deleteUnitAgentAllocation = asyncHandler(async (req, res) => {
+  const existingAllocation = await requireAllocation(req.params.id);
   const allocation = await UnitAgentAllocation.findByIdAndDelete(req.params.id);
 
   if (!allocation) {
@@ -202,6 +204,11 @@ export const deleteUnitAgentAllocation = asyncHandler(async (req, res) => {
     error.statusCode = 404;
     throw error;
   }
+
+  dispatchNotificationTask(
+    notifyUnitAgentAllocationDeleted(existingAllocation),
+    'unit agent allocation delete'
+  );
 
   sendSuccess(res, {
     data: allocation,

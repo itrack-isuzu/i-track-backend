@@ -20,6 +20,10 @@ const getVehicleLabel = (vehicle) =>
 const getLocationLabel = (location) =>
   location?.name?.trim() || location?.address?.trim() || 'selected location';
 
+const getTextValue = (value) => String(value ?? '').trim();
+
+const hasTextChanged = (left, right) => getTextValue(left) !== getTextValue(right);
+
 const getPreparationDispatcherRecipientIds = (preparation) => {
   const dispatcherId = getId(preparation?.dispatcherId);
 
@@ -37,6 +41,12 @@ const buildDriverAllocationReferenceMessage = (allocation) =>
   `${getVehicleLabel(allocation?.vehicleId)} from ${getLocationLabel(
     allocation?.pickupLocation
   )} to ${getLocationLabel(allocation?.destinationLocation)}.`;
+
+const didTestDriveScheduleChange = (previousBooking, nextBooking) =>
+  !idsAreEqual(previousBooking?.vehicleId, nextBooking?.vehicleId) ||
+  hasTextChanged(previousBooking?.scheduledDate, nextBooking?.scheduledDate) ||
+  hasTextChanged(previousBooking?.scheduledTime, nextBooking?.scheduledTime) ||
+  hasTextChanged(previousBooking?.customerName, nextBooking?.customerName);
 
 const notifyPreparationDispatchers = async ({
   preparation,
@@ -140,6 +150,26 @@ export const notifyUnitAgentAllocationUpdated = async ({
   return Promise.all(tasks);
 };
 
+export const notifyUnitAgentAllocationDeleted = async (allocation) => {
+  const salesAgentId = getId(allocation?.salesAgentId);
+
+  if (!salesAgentId) {
+    return [];
+  }
+
+  return createNotificationsForUsers({
+    userIds: [salesAgentId],
+    type: 'vehicle',
+    title: 'Vehicle assignment removed',
+    message: `${getVehicleLabel(allocation?.vehicleId)} is no longer assigned to you.`,
+    data: {
+      entityType: 'unit_agent_allocation',
+      entityId: allocation.id,
+      vehicleId: getId(allocation?.vehicleId),
+    },
+  });
+};
+
 export const notifyDriverAllocationCreated = async (allocation) => {
   const driverId = getId(allocation?.driverId);
 
@@ -211,6 +241,28 @@ export const notifyDriverAllocationUpdated = async ({
     );
   }
 
+  if (
+    nextDriverId &&
+    previousDriverId === nextDriverId &&
+    previousAllocation?.status !== nextAllocation?.status &&
+    nextAllocation?.status === 'cancelled'
+  ) {
+    tasks.push(
+      createNotificationsForUsers({
+        userIds: [nextDriverId],
+        type: 'driver',
+        title: 'Dispatch cancelled',
+        message: `${vehicleLabel} dispatch was cancelled.`,
+        data: {
+          entityType: 'driver_allocation',
+          entityId: nextAllocation.id,
+          vehicleId: getId(nextAllocation?.vehicleId),
+          status: nextAllocation?.status,
+        },
+      })
+    );
+  }
+
   if (managerId && previousAllocation?.status !== nextAllocation?.status) {
     const driverName = getFullName(nextAllocation?.driverId) || 'The driver';
     let title = '';
@@ -254,6 +306,48 @@ export const notifyDriverAllocationUpdated = async ({
         })
       );
     }
+  }
+
+  return Promise.all(tasks);
+};
+
+export const notifyDriverAllocationDeleted = async (allocation) => {
+  const driverId = getId(allocation?.driverId);
+  const managerId = getId(allocation?.managerId);
+  const driverName = getFullName(allocation?.driverId) || 'The assigned driver';
+  const vehicleLabel = getVehicleLabel(allocation?.vehicleId);
+  const notificationData = {
+    entityType: 'driver_allocation',
+    entityId: allocation.id,
+    vehicleId: getId(allocation?.vehicleId),
+    status: allocation?.status,
+  };
+  const tasks = [];
+
+  if (driverId) {
+    tasks.push(
+      createNotificationsForUsers({
+        userIds: [driverId],
+        type: 'driver',
+        title: 'Dispatch removed',
+        message: `${buildDriverAllocationReferenceMessage(
+          allocation
+        )} This dispatch was removed.`,
+        data: notificationData,
+      })
+    );
+  }
+
+  if (managerId) {
+    tasks.push(
+      createNotificationsForUsers({
+        userIds: [managerId],
+        type: 'driver',
+        title: 'Dispatch removed',
+        message: `${driverName} dispatch for ${vehicleLabel} was removed.`,
+        data: notificationData,
+      })
+    );
   }
 
   return Promise.all(tasks);
@@ -308,6 +402,28 @@ export const notifyPreparationUpdated = async ({
     status: nextPreparation?.status,
   };
   const tasks = [];
+  const previousDispatcherId = getId(previousPreparation?.dispatcherId);
+  const nextDispatcherId = getId(nextPreparation?.dispatcherId);
+  const approvalJustApproved =
+    previousPreparation?.approvalStatus !== 'approved' &&
+    nextPreparation?.approvalStatus === 'approved';
+
+  if (
+    previousPreparation?.approvalStatus !== 'awaiting_approval' &&
+    nextPreparation?.approvalStatus === 'awaiting_approval'
+  ) {
+    tasks.push(
+      createNotificationsForRoles({
+        roles: ADMIN_APPROVER_ROLES,
+        type: 'alert',
+        title: 'Preparation approval needed',
+        message: `${vehicleLabel} requested by ${
+          nextPreparation?.requestedByName || 'a team member'
+        } is waiting for approval.`,
+        data: notificationData,
+      })
+    );
+  }
 
   if (
     previousPreparation?.approvalStatus !== 'approved' &&
@@ -319,6 +435,36 @@ export const notifyPreparationUpdated = async ({
         type: 'vehicle',
         title: 'Preparation approved',
         message: `${vehicleLabel} is approved and ready for in-dispatch processing.`,
+        data: notificationData,
+      })
+    );
+  }
+
+  if (previousDispatcherId && previousDispatcherId !== nextDispatcherId) {
+    tasks.push(
+      createNotificationsForUsers({
+        userIds: [previousDispatcherId],
+        type: 'vehicle',
+        title: 'Preparation reassigned',
+        message: `${vehicleLabel} is no longer assigned to you for dispatcher processing.`,
+        data: notificationData,
+      })
+    );
+  }
+
+  if (
+    nextDispatcherId &&
+    previousDispatcherId !== nextDispatcherId &&
+    !approvalJustApproved
+  ) {
+    tasks.push(
+      createNotificationsForUsers({
+        userIds: [nextDispatcherId],
+        type: 'vehicle',
+        title: previousDispatcherId
+          ? 'Preparation reassigned to you'
+          : 'Preparation assigned to you',
+        message: `${vehicleLabel} is assigned to you for dispatcher processing.`,
         data: notificationData,
       })
     );
@@ -375,6 +521,34 @@ export const notifyPreparationUpdated = async ({
   return Promise.all(tasks);
 };
 
+export const notifyPreparationDeleted = async (preparation) => {
+  const recipientIds = [
+    ...new Set(
+      [getId(preparation?.requestedByUserId), getId(preparation?.dispatcherId)].filter(
+        Boolean
+      )
+    ),
+  ];
+
+  if (!recipientIds.length) {
+    return [];
+  }
+
+  return createNotificationsForUsers({
+    userIds: recipientIds,
+    type: 'alert',
+    title: 'Preparation request removed',
+    message: `${getVehicleLabel(preparation?.vehicleId)} preparation request was removed.`,
+    data: {
+      entityType: 'preparation',
+      entityId: preparation.id,
+      vehicleId: getId(preparation?.vehicleId),
+      approvalStatus: preparation?.approvalStatus,
+      status: preparation?.status,
+    },
+  });
+};
+
 export const notifyTestDriveCreated = async (booking) => {
   if (booking?.status !== 'pending') {
     return [];
@@ -403,11 +577,7 @@ export const notifyTestDriveUpdated = async ({
   nextBooking,
 }) => {
   const requesterId = getId(nextBooking?.requestedByUserId);
-
-  if (!requesterId || previousBooking?.status === nextBooking?.status) {
-    return [];
-  }
-
+  const scheduleChanged = didTestDriveScheduleChange(previousBooking, nextBooking);
   const vehicleLabel = getVehicleLabel(nextBooking?.vehicleId);
   const notificationData = {
     entityType: 'test_drive_booking',
@@ -415,6 +585,49 @@ export const notifyTestDriveUpdated = async ({
     vehicleId: getId(nextBooking?.vehicleId),
     status: nextBooking?.status,
   };
+  const tasks = [];
+
+  if (
+    nextBooking?.status === 'pending' &&
+    (previousBooking?.status !== 'pending' || scheduleChanged)
+  ) {
+    tasks.push(
+      createNotificationsForRoles({
+        roles: ADMIN_APPROVER_ROLES,
+        type: 'alert',
+        title:
+          previousBooking?.status === 'pending'
+            ? 'Pending test drive updated'
+            : 'Test drive approval needed',
+        message: `${vehicleLabel} for ${
+          nextBooking?.customerName || 'a customer'
+        } is waiting for approval on ${nextBooking?.scheduledDate} at ${
+          nextBooking?.scheduledTime
+        }.`,
+        data: notificationData,
+      })
+    );
+  }
+
+  if (requesterId && scheduleChanged && previousBooking?.status === nextBooking?.status) {
+    tasks.push(
+      createNotificationsForUsers({
+        userIds: [requesterId],
+        type: 'vehicle',
+        title: 'Test drive schedule updated',
+        message: `${vehicleLabel} test drive for ${
+          nextBooking?.customerName || 'the customer'
+        } was updated to ${nextBooking?.scheduledDate} at ${
+          nextBooking?.scheduledTime
+        }.`,
+        data: notificationData,
+      })
+    );
+  }
+
+  if (!requesterId || previousBooking?.status === nextBooking?.status) {
+    return Promise.all(tasks);
+  }
 
   let title = '';
   let message = '';
@@ -441,14 +654,41 @@ export const notifyTestDriveUpdated = async ({
   }
 
   if (!title || !message) {
+    return Promise.all(tasks);
+  }
+
+  tasks.push(
+    createNotificationsForUsers({
+      userIds: [requesterId],
+      type: 'vehicle',
+      title,
+      message,
+      data: notificationData,
+    })
+  );
+
+  return Promise.all(tasks);
+};
+
+export const notifyTestDriveDeleted = async (booking) => {
+  const requesterId = getId(booking?.requestedByUserId);
+
+  if (!requesterId) {
     return [];
   }
 
   return createNotificationsForUsers({
     userIds: [requesterId],
-    type: 'vehicle',
-    title,
-    message,
-    data: notificationData,
+    type: 'alert',
+    title: 'Test drive request removed',
+    message: `${getVehicleLabel(booking?.vehicleId)} test drive for ${
+      booking?.customerName || 'the customer'
+    } was removed.`,
+    data: {
+      entityType: 'test_drive_booking',
+      entityId: booking.id,
+      vehicleId: getId(booking?.vehicleId),
+      status: booking?.status,
+    },
   });
 };

@@ -2,6 +2,11 @@ import mongoose from 'mongoose';
 
 import { TEST_DRIVE_STATUSES } from '../constants/enums.js';
 import { baseSchemaOptions } from '../utils/schemaOptions.js';
+import {
+  isValidPhoneNumber,
+  normalizePhoneNumber,
+  PHONE_NUMBER_VALIDATION_MESSAGE,
+} from '../utils/phoneNumbers.js';
 
 const testDriveBookingSchema = new mongoose.Schema(
   {
@@ -26,6 +31,10 @@ const testDriveBookingSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      validate: {
+        validator: (value) => isValidPhoneNumber(value),
+        message: PHONE_NUMBER_VALIDATION_MESSAGE,
+      },
     },
     scheduledDate: {
       type: String,
@@ -51,6 +60,14 @@ const testDriveBookingSchema = new mongoose.Schema(
   },
   baseSchemaOptions
 );
+
+testDriveBookingSchema.pre('validate', function normalizeTestDriveBooking(next) {
+  if (this.customerPhone) {
+    this.customerPhone = normalizePhoneNumber(this.customerPhone);
+  }
+
+  next();
+});
 
 export const TestDriveBooking =
   mongoose.models.TestDriveBooking ||

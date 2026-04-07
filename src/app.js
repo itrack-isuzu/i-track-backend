@@ -21,8 +21,17 @@ app.use(
     origin: corsOrigin,
   })
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(
+  express.json({
+    limit: '6mb',
+  })
+);
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: '6mb',
+  })
+);
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 
 app.get('/', (req, res) => {

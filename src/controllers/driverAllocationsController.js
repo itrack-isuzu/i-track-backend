@@ -4,6 +4,7 @@ import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import {
   notifyDriverAllocationCreated,
+  notifyDriverAllocationDeleted,
   notifyDriverAllocationUpdated,
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -292,6 +293,7 @@ export const updateDriverAllocation = asyncHandler(async (req, res) => {
 });
 
 export const deleteDriverAllocation = asyncHandler(async (req, res) => {
+  const existingAllocation = await requireAllocation(req.params.id);
   const allocation = await DriverAllocation.findByIdAndDelete(req.params.id);
 
   if (!allocation) {
@@ -301,6 +303,10 @@ export const deleteDriverAllocation = asyncHandler(async (req, res) => {
   }
 
   await reconcileVehicleStatus(allocation.vehicleId);
+  dispatchNotificationTask(
+    notifyDriverAllocationDeleted(existingAllocation),
+    'driver allocation delete'
+  );
 
   sendSuccess(res, {
     data: allocation,

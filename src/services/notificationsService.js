@@ -73,10 +73,18 @@ const sendPushNotifications = async ({
       String(notification.id),
     ])
   );
+  const notificationTypeByUserId = new Map(
+    notifications.map((notification) => [
+      String(notification.userId),
+      String(notification.type ?? 'system'),
+    ])
+  );
   const messages = [];
 
   users.forEach((user) => {
     const notificationId = notificationIdByUserId.get(String(user.id));
+    const notificationType =
+      notificationTypeByUserId.get(String(user.id)) || 'system';
 
     (user.pushTokens ?? []).forEach((pushToken) => {
       if (!pushToken?.isActive || !Expo.isExpoPushToken(pushToken.token)) {
@@ -93,6 +101,7 @@ const sendPushNotifications = async ({
         data: {
           ...data,
           notificationId,
+          notificationType,
           userId: String(user.id),
         },
       });

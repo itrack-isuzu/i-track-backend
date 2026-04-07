@@ -5,6 +5,11 @@ import {
   USER_ROLES,
 } from '../constants/enums.js';
 import { baseSchemaOptions } from '../utils/schemaOptions.js';
+import {
+  isValidPhoneNumber,
+  normalizePhoneNumber,
+  PHONE_NUMBER_VALIDATION_MESSAGE,
+} from '../utils/phoneNumbers.js';
 
 const passwordResetSchema = new mongoose.Schema(
   {
@@ -92,6 +97,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      validate: {
+        validator: (value) => isValidPhoneNumber(value),
+        message: PHONE_NUMBER_VALIDATION_MESSAGE,
+      },
     },
     passwordHash: {
       type: String,
@@ -144,6 +153,10 @@ userSchema.virtual('name').get(function getName() {
 userSchema.pre('validate', function normalizeUser(next) {
   if (this.email) {
     this.email = this.email.trim().toLowerCase();
+  }
+
+  if (this.phone) {
+    this.phone = normalizePhoneNumber(this.phone);
   }
 
   next();

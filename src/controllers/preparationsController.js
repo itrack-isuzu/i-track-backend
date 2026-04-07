@@ -3,10 +3,15 @@ import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import {
   notifyPreparationCreated,
+  notifyPreparationDeleted,
   notifyPreparationUpdated,
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import {
+  ensureUniquePhoneNumber,
+  ensureValidPhoneNumber,
+} from '../utils/phoneNumbers.js';
 
 const dispatchNotificationTask = (task, label) => {
   void task.catch((error) => {
@@ -105,6 +110,67 @@ const requirePreparation = async (id) => {
   return preparation;
 };
 
+const buildValidatedPayload = async ({
+  id,
+  vehicleId,
+  requestedByUserId,
+  requestedServices,
+  customRequests,
+  customerName,
+  customerContactNo,
+  notes,
+  status,
+  progress,
+  requestedByRole,
+  requestedByName,
+  approvalStatus,
+  approvedByRole,
+  approvedByName,
+  approvedAt,
+  dispatcherId,
+  dispatcherChecklist,
+  completedAt,
+  readyForReleaseAt,
+}) => {
+  const normalizedPhoneNumber = ensureValidPhoneNumber(
+    customerContactNo,
+    'Customer contact number'
+  );
+
+  await ensureUniquePhoneNumber({
+    model: Preparation,
+    field: 'customerContactNo',
+    value: normalizedPhoneNumber,
+    excludeId: id,
+    label: 'Customer contact number',
+  });
+
+  return {
+    vehicleId,
+    requestedByUserId: requestedByUserId ?? null,
+    requestedServices,
+    customRequests,
+    customerName:
+      typeof customerName === 'string' ? customerName.trim() : customerName,
+    customerContactNo: normalizedPhoneNumber,
+    notes: typeof notes === 'string' ? notes.trim() : notes,
+    status,
+    progress,
+    requestedByRole,
+    requestedByName:
+      typeof requestedByName === 'string' ? requestedByName.trim() : requestedByName,
+    approvalStatus,
+    approvedByRole,
+    approvedByName:
+      typeof approvedByName === 'string' ? approvedByName.trim() : approvedByName,
+    approvedAt,
+    dispatcherId: dispatcherId ?? null,
+    dispatcherChecklist,
+    completedAt,
+    readyForReleaseAt,
+  };
+};
+
 const validatePayload = async (payload) => {
   await Promise.all([
     requireVehicle(payload.vehicleId),
@@ -134,8 +200,9 @@ export const getPreparationById = asyncHandler(async (req, res) => {
 });
 
 export const createPreparation = asyncHandler(async (req, res) => {
-  await validatePayload(req.body ?? {});
-  const preparation = await Preparation.create(req.body);
+  const validatedPayload = await buildValidatedPayload(req.body ?? {});
+  await validatePayload(validatedPayload);
+  const preparation = await Preparation.create(validatedPayload);
   const savedPreparation = await requirePreparation(preparation.id);
   dispatchNotificationTask(
     notifyPreparationCreated(savedPreparation),
@@ -159,19 +226,48 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     throw error;
   }
 
-  await validatePayload({
+  const validatedPayload = await buildValidatedPayload({
+    id: existingPreparation.id,
     vehicleId: req.body?.vehicleId ?? existingPreparation.vehicleId,
+    requestedServices:
+      req.body?.requestedServices ?? existingPreparation.requestedServices,
+    customRequests:
+      req.body?.customRequests ?? existingPreparation.customRequests,
+    customerName:
+      req.body?.customerName ?? existingPreparation.customerName,
+    customerContactNo:
+      req.body?.customerContactNo ?? existingPreparation.customerContactNo,
+    notes: req.body?.notes ?? existingPreparation.notes,
+    status: req.body?.status ?? existingPreparation.status,
+    progress: req.body?.progress ?? existingPreparation.progress,
+    requestedByRole:
+      req.body?.requestedByRole ?? existingPreparation.requestedByRole,
+    requestedByName:
+      req.body?.requestedByName ?? existingPreparation.requestedByName,
+    approvalStatus:
+      req.body?.approvalStatus ?? existingPreparation.approvalStatus,
+    approvedByRole:
+      req.body?.approvedByRole ?? existingPreparation.approvedByRole,
+    approvedByName:
+      req.body?.approvedByName ?? existingPreparation.approvedByName,
+    approvedAt: req.body?.approvedAt ?? existingPreparation.approvedAt,
     dispatcherId:
       req.body?.dispatcherId === undefined
         ? existingPreparation.dispatcherId
         : req.body.dispatcherId,
+    dispatcherChecklist:
+      req.body?.dispatcherChecklist ?? existingPreparation.dispatcherChecklist,
+    completedAt: req.body?.completedAt ?? existingPreparation.completedAt,
+    readyForReleaseAt:
+      req.body?.readyForReleaseAt ?? existingPreparation.readyForReleaseAt,
     requestedByUserId:
       req.body?.requestedByUserId === undefined
         ? existingPreparation.requestedByUserId
         : req.body.requestedByUserId,
   });
+  await validatePayload(validatedPayload);
 
-  await Preparation.findByIdAndUpdate(req.params.id, req.body, {
+  await Preparation.findByIdAndUpdate(req.params.id, validatedPayload, {
     new: true,
     runValidators: true,
   });
@@ -192,6 +288,7 @@ export const updatePreparation = asyncHandler(async (req, res) => {
 });
 
 export const deletePreparation = asyncHandler(async (req, res) => {
+  const existingPreparation = await requirePreparation(req.params.id);
   const preparation = await Preparation.findByIdAndDelete(req.params.id);
 
   if (!preparation) {
@@ -199,6 +296,11 @@ export const deletePreparation = asyncHandler(async (req, res) => {
     error.statusCode = 404;
     throw error;
   }
+
+  dispatchNotificationTask(
+    notifyPreparationDeleted(existingPreparation),
+    'preparation delete'
+  );
 
   sendSuccess(res, {
     data: preparation,

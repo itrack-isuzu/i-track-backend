@@ -7,6 +7,11 @@ import {
   USER_ROLES,
 } from '../constants/enums.js';
 import { baseSchemaOptions } from '../utils/schemaOptions.js';
+import {
+  isValidPhoneNumber,
+  normalizePhoneNumber,
+  PHONE_NUMBER_VALIDATION_MESSAGE,
+} from '../utils/phoneNumbers.js';
 
 const dispatcherChecklistStepSchema = new mongoose.Schema(
   {
@@ -62,6 +67,10 @@ const preparationSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      validate: {
+        validator: (value) => isValidPhoneNumber(value),
+        message: PHONE_NUMBER_VALIDATION_MESSAGE,
+      },
     },
     notes: {
       type: String,
@@ -130,6 +139,14 @@ const preparationSchema = new mongoose.Schema(
   },
   baseSchemaOptions
 );
+
+preparationSchema.pre('validate', function normalizePreparation(next) {
+  if (this.customerContactNo) {
+    this.customerContactNo = normalizePhoneNumber(this.customerContactNo);
+  }
+
+  next();
+});
 
 export const Preparation =
   mongoose.models.Preparation ||

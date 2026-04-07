@@ -2,6 +2,7 @@ import { Notification } from '../models/Notification.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import {
+  createNotificationsForUsers,
   registerUserPushToken,
   unregisterUserPushToken,
 } from '../services/notificationsService.js';
@@ -147,5 +148,27 @@ export const unregisterPushToken = asyncHandler(async (req, res) => {
   sendSuccess(res, {
     data: pushTokens,
     message: 'Push token removed successfully.',
+  });
+});
+
+export const sendTestNotification = asyncHandler(async (req, res) => {
+  const userId = requireUserId(req.body?.userId);
+  const issuedAt = new Date().toISOString();
+  const notifications = await createNotificationsForUsers({
+    userIds: [userId],
+    type: 'alert',
+    title: 'Test notification',
+    message:
+      'If you received this on your device, push notifications are working.',
+    data: {
+      entityType: 'test_notification',
+      issuedAt,
+    },
+  });
+
+  sendSuccess(res, {
+    status: 201,
+    data: notifications[0] ?? null,
+    message: 'Test notification sent. Check this device for a push alert.',
   });
 });
