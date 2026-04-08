@@ -29,6 +29,31 @@ const routeStopSchema = new mongoose.Schema(
   }
 );
 
+const liveLocationSchema = new mongoose.Schema(
+  {
+    latitude: {
+      type: Number,
+      required: true,
+    },
+    longitude: {
+      type: Number,
+      required: true,
+    },
+    accuracy: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
 const driverAllocationSchema = new mongoose.Schema(
   {
     managerId: {
@@ -85,6 +110,10 @@ const driverAllocationSchema = new mongoose.Schema(
       default: null,
       min: 0,
       max: 1,
+    },
+    currentLocation: {
+      type: liveLocationSchema,
+      default: null,
     },
     notes: {
       type: String,

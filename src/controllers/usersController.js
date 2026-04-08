@@ -1,4 +1,5 @@
 import { User } from '../models/User.js';
+import { UserAuditEvent } from '../models/UserAuditEvent.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import {
@@ -40,6 +41,27 @@ const getUserRoleLabel = (role) => {
       return 'Driver';
     default:
       return 'User';
+  }
+};
+
+const buildUserFullName = ({ firstName, lastName, email }) =>
+  `${firstName ?? ''} ${lastName ?? ''}`.trim() || String(email ?? '').trim();
+
+const logUserAuditEventSafely = async ({ deletedUserId, name, email, role }) => {
+  try {
+    return await UserAuditEvent.create({
+      deletedUserId,
+      name,
+      email,
+      role,
+      eventType: 'deleted',
+    });
+  } catch (error) {
+    console.warn(
+      '[user-audit-events] Unable to store deleted user event:',
+      error instanceof Error ? error.message : error
+    );
+    return null;
   }
 };
 
@@ -204,6 +226,15 @@ export const getUserById = asyncHandler(async (req, res) => {
   });
 });
 
+export const listUserAuditEvents = asyncHandler(async (req, res) => {
+  const auditEvents = await UserAuditEvent.find().sort({ createdAt: -1 });
+
+  sendSuccess(res, {
+    data: auditEvents,
+    message: 'User audit events fetched successfully.',
+  });
+});
+
 export const createUser = asyncHandler(async (req, res) => {
   const {
     password,
@@ -317,8 +348,18 @@ export const deleteUser = asyncHandler(async (req, res) => {
     throw error;
   }
 
+  const auditEvent = await logUserAuditEventSafely({
+    deletedUserId: user.id,
+    name: buildUserFullName(user),
+    email: user.email,
+    role: user.role,
+  });
+
   sendSuccess(res, {
-    data: user,
+    data: {
+      user,
+      auditEvent,
+    },
     message: 'User deleted successfully.',
   });
 });

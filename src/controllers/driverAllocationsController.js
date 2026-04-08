@@ -31,6 +31,7 @@ const allocationPopulation = [
   },
 ];
 const COMPLETED_ALLOCATION_STATUSES = new Set(['completed', 'delivered']);
+const IN_TRANSIT_ALLOCATION_STATUS = 'in_transit';
 
 const buildAllocationFilters = (query) => {
   const filters = {};
@@ -110,6 +111,54 @@ const assertRouteStops = ({ pickupLocation, destinationLocation }) => {
     error.statusCode = 400;
     throw error;
   }
+};
+
+const parseFiniteNumber = (value, label) => {
+  const parsedValue =
+    typeof value === 'number' ? value : Number(String(value ?? '').trim());
+
+  if (!Number.isFinite(parsedValue)) {
+    const error = new Error(`${label} is required.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return parsedValue;
+};
+
+const buildValidatedLiveLocationPayload = (value) => {
+  if (!value || typeof value !== 'object') {
+    const error = new Error('Driver live location is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const latitude = parseFiniteNumber(value.latitude, 'Latitude');
+  const longitude = parseFiniteNumber(value.longitude, 'Longitude');
+
+  if (latitude < -90 || latitude > 90) {
+    const error = new Error('Latitude must be between -90 and 90.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (longitude < -180 || longitude > 180) {
+    const error = new Error('Longitude must be between -180 and 180.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const accuracyValue =
+    value.accuracy === undefined || value.accuracy === null
+      ? null
+      : parseFiniteNumber(value.accuracy, 'Accuracy');
+
+  return {
+    latitude,
+    longitude,
+    accuracy: accuracyValue === null ? null : Math.max(accuracyValue, 0),
+    updatedAt: new Date(),
+  };
 };
 
 const assertActiveAllocationAvailability = async ({
@@ -342,6 +391,46 @@ export const updateDriverAllocation = asyncHandler(async (req, res) => {
   sendSuccess(res, {
     data: savedAllocation,
     message: 'Driver allocation updated successfully.',
+  });
+});
+
+export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) => {
+  const existingAllocation = await DriverAllocation.findById(req.params.id);
+
+  if (!existingAllocation) {
+    const error = new Error('Driver allocation not found.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (existingAllocation.status !== IN_TRANSIT_ALLOCATION_STATUS) {
+    const error = new Error(
+      'Live location can only be updated while the trip is in transit.'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const currentLocation = buildValidatedLiveLocationPayload(
+    req.body?.currentLocation ?? req.body
+  );
+
+  await DriverAllocation.findByIdAndUpdate(
+    req.params.id,
+    {
+      currentLocation,
+    },
+    {
+      new: true,
+      runValidators: true,
+    }
+  );
+
+  const savedAllocation = await requireAllocation(req.params.id);
+
+  sendSuccess(res, {
+    data: savedAllocation,
+    message: 'Driver live location updated successfully.',
   });
 });
 

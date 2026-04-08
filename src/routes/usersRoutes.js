@@ -4,6 +4,7 @@ import {
   createUser,
   deleteUser,
   getUserById,
+  listUserAuditEvents,
   listUsers,
   updateUser,
 } from '../controllers/usersController.js';
@@ -11,6 +12,7 @@ import {
 const router = Router();
 
 router.get('/', listUsers);
+router.get('/audit-events', listUserAuditEvents);
 router.post('/', createUser);
 router.get('/:id', getUserById);
 router.patch('/:id', updateUser);

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { User } from '../models/User.js';
+import { AuthEvent } from '../models/AuthEvent.js';
 import { sendPasswordResetOtpEmail } from '../services/emailjsService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
@@ -27,6 +28,64 @@ const createHttpError = (message, statusCode = 400) => {
 };
 
 const normalizeEmail = (email) => String(email ?? '').trim().toLowerCase();
+const toOptionalString = (value) => {
+  const normalizedValue = String(value ?? '').trim();
+  return normalizedValue || null;
+};
+
+const getFullName = (user) =>
+  `${user?.firstName ?? ''} ${user?.lastName ?? ''}`.trim();
+
+const toAuthEventPayload = ({
+  userId,
+  name,
+  email,
+  role,
+  eventType,
+}) => {
+  const resolvedName = toOptionalString(name);
+  const resolvedEmail = toOptionalString(email);
+
+  if (!resolvedName || !resolvedEmail) {
+    return null;
+  }
+
+  return {
+    userId: userId ?? null,
+    name: resolvedName,
+    email: normalizeEmail(resolvedEmail),
+    role: toOptionalString(role),
+    eventType,
+  };
+};
+
+const logAuthEvent = async ({ userId, name, email, role, eventType }) => {
+  const payload = toAuthEventPayload({
+    userId,
+    name,
+    email,
+    role,
+    eventType,
+  });
+
+  if (!payload) {
+    return null;
+  }
+
+  return AuthEvent.create(payload);
+};
+
+const logAuthEventSafely = async (payload) => {
+  try {
+    return await logAuthEvent(payload);
+  } catch (error) {
+    console.warn(
+      `[auth-events] Unable to store ${payload?.eventType ?? 'auth'} event:`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+};
 
 const ensureValidEmail = (email) => {
   const normalizedEmail = normalizeEmail(email);
@@ -139,15 +198,59 @@ export const login = asyncHandler(async (req, res) => {
     throw createHttpError('This account is currently deactivated.', 403);
   }
 
+  const populatedUser = await User.findById(user.id).populate(
+    'managerId',
+    'firstName lastName email'
+  );
+
+  if (!populatedUser) {
+    throw createHttpError('Unable to complete sign in right now.', 500);
+  }
+
+  await logAuthEventSafely({
+    userId: populatedUser.id,
+    name: getFullName(populatedUser) || populatedUser.email,
+    email: populatedUser.email,
+    role: populatedUser.role,
+    eventType: 'login',
+  });
+
   sendSuccess(res, {
     data: {
       token: randomUUID(),
-      user: await User.findById(user.id).populate(
-        'managerId',
-        'firstName lastName email'
-      ),
+      user: populatedUser,
     },
     message: 'Sign in successful.',
+  });
+});
+
+export const logout = asyncHandler(async (req, res) => {
+  const userId = toOptionalString(req.body?.userId);
+  const fallbackName = toOptionalString(req.body?.name);
+  const fallbackEmail = toOptionalString(req.body?.email);
+  const fallbackRole = toOptionalString(req.body?.role);
+  const user = userId ? await User.findById(userId) : null;
+
+  await logAuthEventSafely({
+    userId: user?.id ?? userId,
+    name: getFullName(user) || fallbackName,
+    email: user?.email ?? fallbackEmail,
+    role: user?.role ?? fallbackRole,
+    eventType: 'logout',
+  });
+
+  sendSuccess(res, {
+    message: 'Sign out successful.',
+  });
+});
+
+export const listAuthEvents = asyncHandler(async (req, res) => {
+  const authEvents = await AuthEvent.find().sort({
+    createdAt: -1,
+  });
+
+  sendSuccess(res, {
+    data: authEvents,
   });
 });
 

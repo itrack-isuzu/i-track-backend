@@ -180,7 +180,7 @@ export const notifyDriverAllocationCreated = async (allocation) => {
   return createNotificationsForUsers({
     userIds: [driverId],
     type: 'driver',
-    title: 'New dispatch assigned',
+    title: 'New Driving Booking Assigned',
     message: buildDriverAllocationReferenceMessage(allocation),
     data: {
       entityType: 'driver_allocation',
@@ -229,7 +229,7 @@ export const notifyDriverAllocationUpdated = async ({
         title:
           previousDriverId && previousDriverId === nextDriverId
             ? 'Dispatch updated'
-            : 'New dispatch assigned',
+            : 'New Driving Booking Assigned',
         message: buildDriverAllocationReferenceMessage(nextAllocation),
         data: {
           entityType: 'driver_allocation',
