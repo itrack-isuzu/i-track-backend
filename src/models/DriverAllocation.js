@@ -44,9 +44,188 @@ const liveLocationSchema = new mongoose.Schema(
       default: null,
       min: 0,
     },
+    speed: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    heading: {
+      type: Number,
+      default: null,
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
     updatedAt: {
       type: Date,
       default: Date.now,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const aiRecentLocationSchema = new mongoose.Schema(
+  {
+    latitude: {
+      type: Number,
+      required: true,
+    },
+    longitude: {
+      type: Number,
+      required: true,
+    },
+    accuracy: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    speedKph: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    heading: {
+      type: Number,
+      default: null,
+    },
+    timestamp: {
+      type: Date,
+      required: true,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const behaviorEventSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    severity: {
+      type: String,
+      default: 'medium',
+      trim: true,
+    },
+    detectedAt: {
+      type: Date,
+      required: true,
+    },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const aiAlertSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    severity: {
+      type: String,
+      default: 'medium',
+      trim: true,
+    },
+    title: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    message: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    detectedAt: {
+      type: Date,
+      required: true,
+    },
+    status: {
+      type: String,
+      default: 'open',
+      trim: true,
+    },
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const driverScoreSchema = new mongoose.Schema(
+  {
+    score: {
+      type: Number,
+      default: 100,
+      min: 0,
+      max: 100,
+    },
+    rating: {
+      type: String,
+      default: 'Excellent',
+      trim: true,
+    },
+    totalDeductions: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    eventCounts: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    updatedAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    _id: false,
+  }
+);
+
+const aiStateSchema = new mongoose.Schema(
+  {
+    recentLocations: {
+      type: [aiRecentLocationSchema],
+      default: [],
+    },
+    alertState: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    lastIgnoredPoint: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+    lastAnalyzedAt: {
+      type: Date,
+      default: null,
+    },
+    lastAcceptedPointAt: {
+      type: Date,
+      default: null,
+    },
+    latestRouteDistanceMeters: {
+      type: Number,
+      default: null,
+      min: 0,
     },
   },
   {
@@ -114,6 +293,22 @@ const driverAllocationSchema = new mongoose.Schema(
     currentLocation: {
       type: liveLocationSchema,
       default: null,
+    },
+    aiState: {
+      type: aiStateSchema,
+      default: () => ({}),
+    },
+    behaviorEvents: {
+      type: [behaviorEventSchema],
+      default: [],
+    },
+    aiAlerts: {
+      type: [aiAlertSchema],
+      default: [],
+    },
+    driverScore: {
+      type: driverScoreSchema,
+      default: () => ({}),
     },
     notes: {
       type: String,

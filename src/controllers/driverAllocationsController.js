@@ -2,6 +2,7 @@ import { ACTIVE_ALLOCATION_STATUSES } from '../constants/enums.js';
 import { DriverAllocation } from '../models/DriverAllocation.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import { analyzeDriverBehavior } from '../services/driverAi/behaviorAnalysisService.js';
 import {
   notifyDriverAllocationCreated,
   notifyDriverAllocationDeleted,
@@ -152,12 +153,33 @@ const buildValidatedLiveLocationPayload = (value) => {
     value.accuracy === undefined || value.accuracy === null
       ? null
       : parseFiniteNumber(value.accuracy, 'Accuracy');
+  const speedValue =
+    value.speed === undefined || value.speed === null
+      ? null
+      : parseFiniteNumber(value.speed, 'Speed');
+  const headingValue =
+    value.heading === undefined || value.heading === null
+      ? null
+      : parseFiniteNumber(value.heading, 'Heading');
+  const timestampValue =
+    value.timestamp === undefined || value.timestamp === null
+      ? new Date()
+      : new Date(value.timestamp);
+
+  if (Number.isNaN(timestampValue.getTime())) {
+    const error = new Error('Timestamp must be a valid date.');
+    error.statusCode = 400;
+    throw error;
+  }
 
   return {
     latitude,
     longitude,
     accuracy: accuracyValue === null ? null : Math.max(accuracyValue, 0),
-    updatedAt: new Date(),
+    speed: speedValue === null ? null : Math.max(speedValue, 0),
+    heading: headingValue,
+    timestamp: timestampValue,
+    updatedAt: timestampValue,
   };
 };
 
@@ -414,12 +436,26 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
   const currentLocation = buildValidatedLiveLocationPayload(
     req.body?.currentLocation ?? req.body
   );
+  const analysisResult = await analyzeDriverBehavior({
+    allocation: existingAllocation,
+    incomingLocation: currentLocation,
+  });
+  const updatePayload = analysisResult.acceptedPoint
+    ? {
+        currentLocation: analysisResult.currentLocation,
+        routeProgress: analysisResult.routeProgress,
+        aiState: analysisResult.aiState,
+        behaviorEvents: analysisResult.behaviorEvents,
+        aiAlerts: analysisResult.aiAlerts,
+        driverScore: analysisResult.driverScore,
+      }
+    : {
+        aiState: analysisResult.aiState,
+      };
 
   await DriverAllocation.findByIdAndUpdate(
     req.params.id,
-    {
-      currentLocation,
-    },
+    updatePayload,
     {
       new: true,
       runValidators: true,
@@ -429,7 +465,17 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
   const savedAllocation = await requireAllocation(req.params.id);
 
   sendSuccess(res, {
-    data: savedAllocation,
+    data: {
+      ...savedAllocation.toJSON(),
+      aiAnalysis: {
+        acceptedPoint: analysisResult.acceptedPoint,
+        ignoredReason: analysisResult.reason,
+        createdEvents: analysisResult.createdEvents,
+        createdAlerts: analysisResult.createdAlerts,
+        driverScore: analysisResult.driverScore,
+        diagnostics: analysisResult.diagnostics ?? null,
+      },
+    },
     message: 'Driver live location updated successfully.',
   });
 });
