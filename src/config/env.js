@@ -45,6 +45,10 @@ const normalizeSmsProvider = (value) => {
     return undefined;
   }
 
+  if (normalizedValue.startsWith('fortmed')) {
+    return 'fortmed';
+  }
+
   if (normalizedValue.startsWith('fmcsms')) {
     return 'fmcsms';
   }
@@ -80,11 +84,29 @@ export const env = {
   smsEnabled: toBoolean(process.env.SMS_ENABLED, true),
   smsProvider:
     normalizeSmsProvider(process.env.SMS_PROVIDER) ??
+    (process.env.FORTMED_API_URL ||
+    process.env.SMS_API_URL ||
+    process.env.FORTMED_API_KEY ||
+    process.env.SMS_API_KEY
+      ? 'fortmed'
+      :
     (process.env.FMCSMS_USERNAME ||
     process.env.FMCSMS_PASSWORD ||
     process.env.FMCSMS_API_KEY
       ? 'fmcsms'
-      : 'twilio'),
+      : 'twilio')),
+  fortmedApiUrl:
+    toOptionalString(process.env.FORTMED_API_URL ?? process.env.SMS_API_URL) ??
+    'https://fortmed.org/web/FMCSMS/api/messages.php',
+  fortmedApiKey: toOptionalString(
+    process.env.FORTMED_API_KEY ?? process.env.SMS_API_KEY
+  ),
+  fortmedSenderId: toOptionalString(
+    process.env.FORTMED_SENDER_ID ?? process.env.SMS_SENDER_ID
+  ),
+  fortmedFromNumber: toOptionalString(
+    process.env.FORTMED_FROM_NUMBER ?? process.env.SMS_FROM_NUMBER
+  ),
   fmcsmsApiUrl:
     toOptionalString(process.env.FMCSMS_API_URL) ??
     'http://www.ciedco-sms.net/api/sendsms.php',

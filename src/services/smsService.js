@@ -62,6 +62,12 @@ const toFmcsmsMobileNumber = (value) => {
 const getTwilioEndpoint = () =>
   `https://api.twilio.com/2010-04-01/Accounts/${env.twilioAccountSid}/Messages.json`;
 
+const FORTMED_REFERENCE_ENDPOINT =
+  'https://fortmed.org/web/FMCSMS/api/messages.php';
+
+const isFortmedConfigured = () =>
+  Boolean(env.smsEnabled && env.fortmedApiUrl && env.fortmedApiKey);
+
 const getFmcsmsEndpoint = () => env.fmcsmsApiUrl;
 
 const isFmcsmsConfigured = () =>
@@ -87,6 +93,250 @@ const parseJsonSafely = (value) => {
   } catch {
     return null;
   }
+};
+
+const maskPhoneNumber = (value) => {
+  const normalizedValue = String(value ?? '').trim();
+
+  if (normalizedValue.length <= 4) {
+    return normalizedValue;
+  }
+
+  return `${'*'.repeat(Math.max(normalizedValue.length - 4, 0))}${normalizedValue.slice(-4)}`;
+};
+
+const maskApiKey = (value) => {
+  const normalizedValue = String(value ?? '').trim();
+
+  if (!normalizedValue) {
+    return '';
+  }
+
+  if (normalizedValue.length <= 8) {
+    return `${normalizedValue.slice(0, 2)}***`;
+  }
+
+  return `${normalizedValue.slice(0, 8)}********************`;
+};
+
+const isSuccessfulFortmedResponse = (responseBody) => {
+  if (!responseBody) {
+    return false;
+  }
+
+  if (typeof responseBody === 'string') {
+    return /\b(success|queued|accepted|sent)\b/i.test(responseBody);
+  }
+
+  return Boolean(
+    responseBody.success === true ||
+      responseBody.IsSuccessful === true ||
+      responseBody.isSuccessful === true ||
+      responseBody.status === 'success' ||
+      responseBody.result === 'success'
+  );
+};
+
+const isFortmedDnsFailure = (error) =>
+  error instanceof TypeError &&
+  error?.cause &&
+  typeof error.cause === 'object' &&
+  error.cause !== null &&
+  'code' in error.cause &&
+  error.cause.code === 'ENOTFOUND';
+
+const isLegacyFortmedHostname = (value) => {
+  try {
+    return new URL(String(value ?? '')).hostname === 'api.fortmedph.com';
+  } catch {
+    return false;
+  }
+};
+
+const postFortmedSms = async ({ endpoint, payload }) => {
+  console.log('[SMS][Fortmed] Starting preparation completion SMS send.', {
+    provider: env.smsProvider,
+    endpoint,
+    senderName: payload.SenderName,
+    fromNumber: payload.FromNumber ? maskPhoneNumber(payload.FromNumber) : null,
+    toNumber: maskPhoneNumber(payload.ToNumber),
+    apiKey: maskApiKey(env.fortmedApiKey),
+    vehicleLabel: payload.MessageBody ? 'included' : 'missing',
+  });
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': env.fortmedApiKey,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const rawResponseBody = await response.text();
+  const responseBody = parseJsonSafely(rawResponseBody) ?? rawResponseBody;
+
+  console.log('[SMS][Fortmed] Response received.', {
+    endpoint,
+    status: response.status,
+    ok: response.ok,
+    body:
+      typeof responseBody === 'object' && responseBody !== null
+        ? responseBody
+        : String(rawResponseBody ?? '').trim(),
+  });
+
+  return {
+    response,
+    rawResponseBody,
+    responseBody,
+  };
+};
+
+const sendPreparationCompletionSmsViaFortmed = async ({
+  customerName,
+  phoneNumber,
+  vehicleLabel,
+}) => {
+  if (!isFortmedConfigured()) {
+    console.warn(
+      'Preparation completion SMS skipped because Fortmed is not configured.'
+    );
+
+    return {
+      skipped: true,
+      reason: 'unconfigured',
+    };
+  }
+
+  const smsRecipient = toPhilippineE164(phoneNumber);
+
+  if (!smsRecipient.startsWith('+63')) {
+    throw new Error('Customer contact number is not in a supported SMS format.');
+  }
+
+  const payload = {
+    SenderName: env.fortmedSenderId ?? 'I-Track',
+    ToNumber: smsRecipient,
+    MessageBody: buildPreparationCompletionMessage({
+      customerName,
+      vehicleLabel,
+    }),
+  };
+
+  if (env.fortmedFromNumber) {
+    payload.FromNumber = env.fortmedFromNumber;
+  }
+  let response;
+  let rawResponseBody;
+  let responseBody;
+  let activeEndpoint = env.fortmedApiUrl;
+
+  try {
+    ({
+      response,
+      rawResponseBody,
+      responseBody,
+    } = await postFortmedSms({
+      endpoint: activeEndpoint,
+      payload,
+    }));
+  } catch (error) {
+    if (
+      isFortmedDnsFailure(error) &&
+      isLegacyFortmedHostname(activeEndpoint) &&
+      activeEndpoint !== FORTMED_REFERENCE_ENDPOINT
+    ) {
+      console.warn(
+        '[SMS][Fortmed] Primary Fortmed hostname could not be resolved. Retrying with reference endpoint.',
+        {
+          failedEndpoint: activeEndpoint,
+          fallbackEndpoint: FORTMED_REFERENCE_ENDPOINT,
+        }
+      );
+
+      activeEndpoint = FORTMED_REFERENCE_ENDPOINT;
+      ({
+        response,
+        rawResponseBody,
+        responseBody,
+      } = await postFortmedSms({
+        endpoint: activeEndpoint,
+        payload,
+      }));
+    } else {
+      throw error;
+    }
+  }
+
+  if (!response.ok) {
+    console.error('[SMS][Fortmed] Request failed.', {
+      endpoint: activeEndpoint,
+      status: response.status,
+      body:
+        typeof responseBody === 'object' && responseBody !== null
+          ? responseBody
+          : String(rawResponseBody ?? '').trim(),
+    });
+
+    throw new Error(
+      String(
+        (typeof responseBody === 'object' && responseBody !== null
+          ? responseBody.message ??
+            responseBody.detail ??
+            responseBody.error
+          : responseBody) || 'Unable to send preparation completion SMS.'
+      ).trim()
+    );
+  }
+
+  if (!isSuccessfulFortmedResponse(responseBody)) {
+    console.error('[SMS][Fortmed] Unexpected success payload.', {
+      endpoint: activeEndpoint,
+      status: response.status,
+      body:
+        typeof responseBody === 'object' && responseBody !== null
+          ? responseBody
+          : String(rawResponseBody ?? '').trim(),
+    });
+
+    throw new Error(
+      String(
+        (typeof responseBody === 'object' && responseBody !== null
+          ? responseBody.message ??
+            responseBody.detail ??
+            responseBody.error
+          : responseBody) || 'Fortmed returned an unexpected response.'
+      ).trim()
+    );
+  }
+
+  console.log('[SMS][Fortmed] SMS accepted by provider.', {
+    endpoint: activeEndpoint,
+    toNumber: maskPhoneNumber(smsRecipient),
+    status: response.status,
+  });
+
+  return {
+    skipped: false,
+    provider: 'fortmed',
+    sid:
+      (typeof responseBody === 'object' && responseBody !== null
+        ? responseBody.sid ??
+          responseBody.messageId ??
+          responseBody.referenceId ??
+          responseBody.Result ??
+          null
+        : null),
+    to: smsRecipient,
+    meta:
+      typeof responseBody === 'object' && responseBody !== null
+        ? {
+            accepted: true,
+            maskedRecipient: maskPhoneNumber(smsRecipient),
+          }
+        : undefined,
+  };
 };
 
 const isSuccessfulFmcsmsResponse = (rawResponseBody, responseBody) => {
@@ -251,10 +501,28 @@ export const sendPreparationCompletionSms = async ({
   vehicleLabel,
 }) => {
   if (!env.smsEnabled) {
+    console.warn('[SMS] SMS send skipped because SMS_ENABLED is false.');
+
     return {
       skipped: true,
       reason: 'disabled',
     };
+  }
+
+  console.log('[SMS] Dispatch requested.', {
+    provider: env.smsProvider,
+    fortmedConfigured: isFortmedConfigured(),
+    fmcsmsConfigured: isFmcsmsConfigured(),
+    twilioConfigured: isTwilioConfigured(),
+    toNumber: maskPhoneNumber(toPhilippineE164(phoneNumber)),
+  });
+
+  if (env.smsProvider === 'fortmed') {
+    return sendPreparationCompletionSmsViaFortmed({
+      customerName,
+      phoneNumber,
+      vehicleLabel,
+    });
   }
 
   if (env.smsProvider === 'fmcsms') {

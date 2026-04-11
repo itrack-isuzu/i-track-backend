@@ -75,6 +75,41 @@ For new account credential emails, the backend can also send these params:
 - `login_email`
 - `account_email`
 
+## SMS configuration
+
+The preparation SMS notification is triggered by the backend when a preparation moves into the release-complete flow, including the web "Confirm Ready for Release" action.
+
+Add these variables to `.env`:
+
+- `SMS_ENABLED=true`
+- `SMS_PROVIDER=fortmed`, `SMS_PROVIDER=fmcsms`, or `SMS_PROVIDER=twilio`
+- `FORTMED_API_URL`
+- `FORTMED_API_KEY`
+- `FORTMED_SENDER_ID`
+- `FORTMED_FROM_NUMBER` (optional)
+- `SMS_API_URL`, `SMS_API_KEY`, `SMS_SENDER_ID`, `SMS_FROM_NUMBER` also work as Fortmed-compatible legacy aliases
+- `FMCSMS_API_URL`
+- `FMCSMS_USERNAME`
+- `FMCSMS_PASSWORD`
+- `FMCSMS_SENDER_ID`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_FROM_NUMBER`
+
+Recommended local setup:
+
+- Keep your frontend at `NEXT_PUBLIC_API_URL=http://localhost:4000/api`
+- Run the backend with your Fortmed credentials in local `.env`
+- From the web app, open Preparation and confirm "Ready for Release"
+
+Recommended deployed setup:
+
+- Add the same Fortmed SMS variables in your deployed backend environment, such as Render
+- Keep the web frontend pointing to the deployed backend URL
+- Redeploy the backend after saving the new environment variables
+
+If `SMS_ENABLED` is true but the selected provider is not fully configured, the preparation will still be marked ready for release and the SMS step will be skipped.
+
 ## Frontend API URLs
 
 - Expo mobile app: `EXPO_PUBLIC_API_URL=http://localhost:4000/api`

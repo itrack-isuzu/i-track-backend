@@ -61,6 +61,7 @@ const lockedPreparationStatuses = new Set([
 
 const completionSmsEligibleStatuses = new Set([
   'completed',
+  'ready_for_release',
 ]);
 
 const activePreparationVehicleStatuses = new Set([
@@ -235,17 +236,37 @@ const shouldSendPreparationCompletionSms = ({
   previousPreparation,
   nextPreparation,
 }) => {
+  console.log('[SMS][Preparation] Evaluating completion SMS trigger.', {
+    preparationId: nextPreparation?.id ?? null,
+    previousStatus: previousPreparation?.status ?? null,
+    nextStatus: nextPreparation?.status ?? null,
+    customerContactNo: nextPreparation?.customerContactNo ?? null,
+    completionSmsSentAt: nextPreparation?.completionSmsSentAt ?? null,
+    completionSmsDispatchStartedAt:
+      nextPreparation?.completionSmsDispatchStartedAt ?? null,
+  });
+
   if (
     !nextPreparation?.customerContactNo ||
     nextPreparation?.completionSmsSentAt ||
     nextPreparation?.completionSmsDispatchStartedAt
   ) {
+    console.log(
+      '[SMS][Preparation] Skipping SMS trigger because contact number is missing or a send already exists/is running.'
+    );
     return false;
   }
 
   if (!completionSmsEligibleStatuses.has(nextPreparation?.status)) {
+    console.log('[SMS][Preparation] Skipping SMS trigger because status is not eligible.', {
+      allowedStatuses: Array.from(completionSmsEligibleStatuses),
+    });
     return false;
   }
+
+  console.log('[SMS][Preparation] SMS trigger decision.', {
+    shouldSend: previousPreparation?.status !== nextPreparation?.status,
+  });
 
   return previousPreparation?.status !== nextPreparation?.status;
 };
@@ -260,10 +281,17 @@ const syncPreparationCompletionSms = async ({
       nextPreparation,
     })
   ) {
+    console.log('[SMS][Preparation] SMS sync exited early because trigger returned false.', {
+      preparationId: nextPreparation?.id ?? null,
+    });
     return null;
   }
 
   try {
+    console.log('[SMS][Preparation] Attempting to claim SMS dispatch.', {
+      preparationId: nextPreparation.id,
+    });
+
     const claimedPreparation = await Preparation.findOneAndUpdate(
       {
         _id: nextPreparation.id,
@@ -280,8 +308,17 @@ const syncPreparationCompletionSms = async ({
     );
 
     if (!claimedPreparation) {
+      console.log(
+        '[SMS][Preparation] SMS dispatch claim skipped because another process may have handled it.'
+      );
       return null;
     }
+
+    console.log('[SMS][Preparation] SMS dispatch claimed successfully.', {
+      preparationId: nextPreparation.id,
+      customerName: nextPreparation.customerName,
+      customerContactNo: nextPreparation.customerContactNo,
+    });
 
     const smsResult = await sendPreparationCompletionSms({
       customerName: nextPreparation.customerName,
@@ -290,6 +327,11 @@ const syncPreparationCompletionSms = async ({
     });
 
     if (smsResult?.skipped) {
+      console.warn('[SMS][Preparation] SMS send skipped by provider configuration.', {
+        preparationId: nextPreparation.id,
+        result: smsResult,
+      });
+
       await Preparation.findByIdAndUpdate(nextPreparation.id, {
         completionSmsDispatchStartedAt: null,
       });
@@ -303,8 +345,18 @@ const syncPreparationCompletionSms = async ({
       completionSmsLastError: null,
     });
 
+    console.log('[SMS][Preparation] SMS send completed successfully.', {
+      preparationId: nextPreparation.id,
+      result: smsResult,
+    });
+
     return smsResult;
   } catch (error) {
+    console.error('[SMS][Preparation] SMS send failed.', {
+      preparationId: nextPreparation.id,
+      error: String(error?.message ?? error ?? 'Unable to send SMS.'),
+    });
+
     await Preparation.findByIdAndUpdate(nextPreparation.id, {
       completionSmsDispatchStartedAt: null,
       completionSmsLastError:
@@ -320,6 +372,12 @@ const dispatchPreparationCompletionSmsTask = ({
   previousPreparation,
   nextPreparation,
 }) => {
+  console.log('[SMS][Preparation] Queueing completion SMS background task.', {
+    preparationId: nextPreparation?.id ?? null,
+    previousStatus: previousPreparation?.status ?? null,
+    nextStatus: nextPreparation?.status ?? null,
+  });
+
   dispatchNotificationTask(
     syncPreparationCompletionSms({
       previousPreparation,
