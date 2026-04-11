@@ -9,10 +9,7 @@ import {
 import { sendPreparationCompletionSms } from '../services/smsService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
-import {
-  ensureUniquePhoneNumber,
-  ensureValidPhoneNumber,
-} from '../utils/phoneNumbers.js';
+import { ensureValidPhoneNumber } from '../utils/phoneNumbers.js';
 
 const dispatchNotificationTask = (task, label) => {
   void task.catch((error) => {
@@ -471,14 +468,6 @@ const buildValidatedPayload = async ({
     customerContactNo,
     'Customer contact number'
   );
-
-  await ensureUniquePhoneNumber({
-    model: Preparation,
-    field: 'customerContactNo',
-    value: normalizedPhoneNumber,
-    excludeId: id,
-    label: 'Customer contact number',
-  });
 
   return {
     vehicleId,
