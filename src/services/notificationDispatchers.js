@@ -6,7 +6,47 @@ import {
 const ADMIN_APPROVER_ROLES = ['admin', 'supervisor'];
 const DISPATCHER_ROLE = ['dispatcher'];
 
-const getId = (value) => String(value?.id ?? value ?? '').trim();
+const getId = (value) => {
+  if (!value) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+
+  if (typeof value === 'object') {
+    if (typeof value.id === 'string' && value.id.trim()) {
+      return value.id.trim();
+    }
+
+    if (typeof value._id === 'string' && value._id.trim()) {
+      return value._id.trim();
+    }
+
+    if (
+      value._id &&
+      typeof value._id === 'object' &&
+      typeof value._id.toString === 'function'
+    ) {
+      const nestedObjectId = value._id.toString().trim();
+
+      if (nestedObjectId && nestedObjectId !== '[object Object]') {
+        return nestedObjectId;
+      }
+    }
+
+    if (typeof value.toString === 'function') {
+      const stringifiedValue = value.toString().trim();
+
+      if (stringifiedValue && stringifiedValue !== '[object Object]') {
+        return stringifiedValue;
+      }
+    }
+  }
+
+  return '';
+};
 
 const idsAreEqual = (left, right) => getId(left) === getId(right);
 
