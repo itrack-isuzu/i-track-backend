@@ -5,6 +5,7 @@ import {
 
 const ADMIN_APPROVER_ROLES = ['admin', 'supervisor'];
 const DISPATCHER_ROLE = ['dispatcher'];
+const IN_TRANSIT_HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
 
 const getId = (value) => String(value?.id ?? value ?? '').trim();
 
@@ -41,6 +42,63 @@ const buildDriverAllocationReferenceMessage = (allocation) =>
   `${getVehicleLabel(allocation?.vehicleId)} from ${getLocationLabel(
     allocation?.pickupLocation
   )} to ${getLocationLabel(allocation?.destinationLocation)}.`;
+
+export const isDriverInTransitHeartbeatDue = (allocation, detectedAt = new Date()) => {
+  if (allocation?.status !== 'in_transit') {
+    return false;
+  }
+
+  const lastHeartbeatAt = allocation?.aiState?.lastTransitHeartbeatNotifiedAt;
+
+  if (!lastHeartbeatAt) {
+    return true;
+  }
+
+  return (
+    new Date(detectedAt).getTime() - new Date(lastHeartbeatAt).getTime() >=
+    IN_TRANSIT_HEARTBEAT_INTERVAL_MS
+  );
+};
+
+export const notifyDriverInTransitHeartbeat = async (allocation) => {
+  if (allocation?.status !== 'in_transit') {
+    return [];
+  }
+
+  const managerId = getId(allocation?.managerId);
+  const driverName = getFullName(allocation?.driverId) || 'The driver';
+  const vehicleLabel = getVehicleLabel(allocation?.vehicleId);
+  const title = 'Driver still in transit';
+  const message = `${driverName} is still in transit for ${vehicleLabel}.`;
+  const data = {
+    entityType: 'driver_allocation',
+    entityId: allocation.id,
+    vehicleId: getId(allocation?.vehicleId),
+    driverId: getId(allocation?.driverId),
+    status: allocation?.status,
+    currentLocation: allocation?.currentLocation ?? null,
+    routeProgress: allocation?.routeProgress ?? null,
+    heartbeatType: 'in_transit',
+  };
+
+  if (managerId) {
+    return createNotificationsForUsers({
+      userIds: [managerId],
+      type: 'alert',
+      title,
+      message,
+      data,
+    });
+  }
+
+  return createNotificationsForRoles({
+    roles: ADMIN_APPROVER_ROLES,
+    type: 'alert',
+    title,
+    message,
+    data,
+  });
+};
 
 const didTestDriveScheduleChange = (previousBooking, nextBooking) =>
   !idsAreEqual(previousBooking?.vehicleId, nextBooking?.vehicleId) ||

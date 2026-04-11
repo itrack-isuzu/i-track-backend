@@ -4,8 +4,10 @@ import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import { analyzeDriverBehavior } from '../services/driverAi/behaviorAnalysisService.js';
 import {
+  isDriverInTransitHeartbeatDue,
   notifyDriverAllocationCreated,
   notifyDriverAllocationDeleted,
+  notifyDriverInTransitHeartbeat,
   notifyDriverAllocationUpdated,
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -440,6 +442,9 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
     allocation: existingAllocation,
     incomingLocation: currentLocation,
   });
+  const heartbeatDue =
+    analysisResult.acceptedPoint &&
+    isDriverInTransitHeartbeatDue(existingAllocation, currentLocation.timestamp);
   const updatePayload = analysisResult.acceptedPoint
     ? {
         currentLocation: analysisResult.currentLocation,
@@ -453,6 +458,13 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
         aiState: analysisResult.aiState,
       };
 
+  if (heartbeatDue) {
+    updatePayload.aiState = {
+      ...(updatePayload.aiState ?? existingAllocation.aiState ?? {}),
+      lastTransitHeartbeatNotifiedAt: currentLocation.timestamp,
+    };
+  }
+
   await DriverAllocation.findByIdAndUpdate(
     req.params.id,
     updatePayload,
@@ -463,6 +475,13 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
   );
 
   const savedAllocation = await requireAllocation(req.params.id);
+
+  if (heartbeatDue) {
+    dispatchNotificationTask(
+      notifyDriverInTransitHeartbeat(savedAllocation),
+      'driver in transit heartbeat'
+    );
+  }
 
   sendSuccess(res, {
     data: {

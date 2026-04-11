@@ -222,6 +222,10 @@ const aiStateSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    lastTransitHeartbeatNotifiedAt: {
+      type: Date,
+      default: null,
+    },
     latestRouteDistanceMeters: {
       type: Number,
       default: null,
