@@ -79,6 +79,12 @@ For new account credential emails, the backend can also send these params:
 
 The preparation SMS notification is triggered by the backend when a preparation moves into the release-complete flow, including the web "Confirm Ready for Release" action.
 
+When backend SMS variables are missing, the backend now falls back to these UI env files in this order:
+
+- `frontend/.env`
+- `web-frontend/.env.local`
+- `web-frontend/.env`
+
 Add these variables to `.env`:
 
 - `SMS_ENABLED=true`

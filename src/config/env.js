@@ -1,6 +1,59 @@
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const workspaceRoot = path.resolve(__dirname, '..', '..', '..');
+
+const loadEnvFile = (relativePath) => {
+  const absolutePath = path.resolve(workspaceRoot, relativePath);
+
+  if (!fs.existsSync(absolutePath)) {
+    return {};
+  }
+
+  try {
+    return dotenv.parse(fs.readFileSync(absolutePath));
+  } catch {
+    return {};
+  }
+};
+
+const frontendEnv = loadEnvFile('frontend/.env');
+const webFrontendLocalEnv = loadEnvFile('web-frontend/.env.local');
+const webFrontendEnv = loadEnvFile('web-frontend/.env');
+
+const getFallbackEnvValue = (key) => {
+  const runtimeValue = process.env[key];
+
+  if (runtimeValue !== undefined && String(runtimeValue).trim() !== '') {
+    return runtimeValue;
+  }
+
+  const frontendValue = frontendEnv[key];
+  if (frontendValue !== undefined && String(frontendValue).trim() !== '') {
+    return frontendValue;
+  }
+
+  const webFrontendLocalValue = webFrontendLocalEnv[key];
+  if (
+    webFrontendLocalValue !== undefined &&
+    String(webFrontendLocalValue).trim() !== ''
+  ) {
+    return webFrontendLocalValue;
+  }
+
+  const webFrontendValue = webFrontendEnv[key];
+  if (webFrontendValue !== undefined && String(webFrontendValue).trim() !== '') {
+    return webFrontendValue;
+  }
+
+  return undefined;
+};
 
 const trueValues = new Set(['1', 'true', 'yes', 'on']);
 
@@ -81,50 +134,57 @@ export const env = {
   emailjsAppName: process.env.EMAILJS_APP_NAME?.trim() || 'I-TRACK',
   emailjsSupportEmail: toOptionalString(process.env.EMAILJS_SUPPORT_EMAIL),
   expoAccessToken: toOptionalString(process.env.EXPO_ACCESS_TOKEN),
-  smsEnabled: toBoolean(process.env.SMS_ENABLED, true),
+  smsEnabled: toBoolean(getFallbackEnvValue('SMS_ENABLED'), true),
   smsProvider:
-    normalizeSmsProvider(process.env.SMS_PROVIDER) ??
-    (process.env.FORTMED_API_URL ||
-    process.env.SMS_API_URL ||
-    process.env.FORTMED_API_KEY ||
-    process.env.SMS_API_KEY
+    normalizeSmsProvider(getFallbackEnvValue('SMS_PROVIDER')) ??
+    (getFallbackEnvValue('FORTMED_API_URL') ||
+    getFallbackEnvValue('SMS_API_URL') ||
+    getFallbackEnvValue('FORTMED_API_KEY') ||
+    getFallbackEnvValue('SMS_API_KEY')
       ? 'fortmed'
       :
-    (process.env.FMCSMS_USERNAME ||
-    process.env.FMCSMS_PASSWORD ||
-    process.env.FMCSMS_API_KEY
+    (getFallbackEnvValue('FMCSMS_USERNAME') ||
+    getFallbackEnvValue('FMCSMS_PASSWORD') ||
+    getFallbackEnvValue('FMCSMS_API_KEY')
       ? 'fmcsms'
       : 'twilio')),
   fortmedApiUrl:
-    toOptionalString(process.env.FORTMED_API_URL ?? process.env.SMS_API_URL) ??
+    toOptionalString(
+      getFallbackEnvValue('FORTMED_API_URL') ?? getFallbackEnvValue('SMS_API_URL')
+    ) ??
     'https://fortmed.org/web/FMCSMS/api/messages.php',
   fortmedApiKey: toOptionalString(
-    process.env.FORTMED_API_KEY ?? process.env.SMS_API_KEY
+    getFallbackEnvValue('FORTMED_API_KEY') ?? getFallbackEnvValue('SMS_API_KEY')
   ),
   fortmedSenderId: toOptionalString(
-    process.env.FORTMED_SENDER_ID ?? process.env.SMS_SENDER_ID
+    getFallbackEnvValue('FORTMED_SENDER_ID') ??
+      getFallbackEnvValue('SMS_SENDER_ID')
   ),
   fortmedFromNumber: toOptionalString(
-    process.env.FORTMED_FROM_NUMBER ?? process.env.SMS_FROM_NUMBER
+    getFallbackEnvValue('FORTMED_FROM_NUMBER') ??
+      getFallbackEnvValue('SMS_FROM_NUMBER')
   ),
   fmcsmsApiUrl:
-    toOptionalString(process.env.FMCSMS_API_URL) ??
+    toOptionalString(getFallbackEnvValue('FMCSMS_API_URL')) ??
     'http://www.ciedco-sms.net/api/sendsms.php',
   fmcsmsUsername: toOptionalString(
-    process.env.FMCSMS_USERNAME ?? process.env.FMCSMS_API_USERNAME
+    getFallbackEnvValue('FMCSMS_USERNAME') ??
+      getFallbackEnvValue('FMCSMS_API_USERNAME')
   ),
   fmcsmsPassword: toOptionalString(
-    process.env.FMCSMS_PASSWORD ?? process.env.FMCSMS_API_KEY
+    getFallbackEnvValue('FMCSMS_PASSWORD') ??
+      getFallbackEnvValue('FMCSMS_API_KEY')
   ),
   fmcsmsSenderId: toOptionalString(
-    process.env.FMCSMS_SENDER_ID ?? process.env.FMCSMS_SENDER
+    getFallbackEnvValue('FMCSMS_SENDER_ID') ??
+      getFallbackEnvValue('FMCSMS_SENDER')
   ),
-  twilioAccountSid: toOptionalString(process.env.TWILIO_ACCOUNT_SID),
-  twilioAuthToken: toOptionalString(process.env.TWILIO_AUTH_TOKEN),
+  twilioAccountSid: toOptionalString(getFallbackEnvValue('TWILIO_ACCOUNT_SID')),
+  twilioAuthToken: toOptionalString(getFallbackEnvValue('TWILIO_AUTH_TOKEN')),
   twilioMessagingServiceSid: toOptionalString(
-    process.env.TWILIO_MESSAGING_SERVICE_SID
+    getFallbackEnvValue('TWILIO_MESSAGING_SERVICE_SID')
   ),
-  twilioFromNumber: toOptionalString(process.env.TWILIO_FROM_NUMBER),
+  twilioFromNumber: toOptionalString(getFallbackEnvValue('TWILIO_FROM_NUMBER')),
   passwordResetOtpExpiresMinutes: toNumber(
     process.env.PASSWORD_RESET_OTP_EXPIRES_MINUTES,
     10
