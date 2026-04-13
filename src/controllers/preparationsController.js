@@ -6,6 +6,10 @@ import {
   notifyPreparationDeleted,
   notifyPreparationUpdated,
 } from '../services/notificationDispatchers.js';
+import {
+  retrainPreparationEtaModel,
+  syncPreparationEtaPrediction,
+} from '../services/preparationEtaService.js';
 import { sendPreparationCompletionSms } from '../services/smsService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
@@ -74,6 +78,52 @@ const toOptionalDate = (value) => {
 
   const parsedDate = value instanceof Date ? value : new Date(value);
   return Number.isNaN(parsedDate.getTime()) ? null : parsedDate;
+};
+
+const normalizeChecklistItems = (dispatcherChecklist, existingChecklist = []) => {
+  if (!Array.isArray(dispatcherChecklist)) {
+    return [];
+  }
+
+  return dispatcherChecklist.map((item, index) => {
+    const existingItem = existingChecklist.find(
+      (entry) =>
+        String(entry?.id ?? '').trim() === String(item?.id ?? '').trim() &&
+        String(entry?.label ?? '').trim() === String(item?.label ?? '').trim()
+    );
+    const completed = item?.completed === true;
+    const explicitCompletedAt = toOptionalDate(item?.completedAt);
+
+    return {
+      id: String(item?.id ?? `dispatch-step-${index + 1}`).trim(),
+      label: String(item?.label ?? '').trim(),
+      completed,
+      completedAt: completed
+        ? explicitCompletedAt ?? toOptionalDate(existingItem?.completedAt) ?? new Date()
+        : null,
+    };
+  });
+};
+
+const normalizePreparationEtaFields = ({
+  status,
+  approvedAt,
+  inDispatchAt,
+  existingInDispatchAt,
+}) => {
+  const resolvedApprovedAt = toOptionalDate(approvedAt);
+  const resolvedInDispatchAt = toOptionalDate(inDispatchAt);
+  const resolvedExistingInDispatchAt = toOptionalDate(existingInDispatchAt);
+
+  return {
+    inDispatchAt:
+      status === 'in_dispatch' || status === 'completed' || status === 'ready_for_release'
+        ? resolvedExistingInDispatchAt ??
+          resolvedInDispatchAt ??
+          resolvedApprovedAt ??
+          new Date()
+        : null,
+  };
 };
 
 const normalizePreparationStatusDates = ({
@@ -443,7 +493,6 @@ const requirePreparation = async (id) => {
 };
 
 const buildValidatedPayload = async ({
-  id,
   vehicleId,
   requestedByUserId,
   requestedServices,
@@ -461,12 +510,18 @@ const buildValidatedPayload = async ({
   approvedAt,
   dispatcherId,
   dispatcherChecklist,
+  inDispatchAt,
   completedAt,
   readyForReleaseAt,
+  existingPreparation,
 }) => {
   const normalizedPhoneNumber = ensureValidPhoneNumber(
     customerContactNo,
     'Customer contact number'
+  );
+  const normalizedChecklist = normalizeChecklistItems(
+    dispatcherChecklist,
+    existingPreparation?.dispatcherChecklist
   );
 
   return {
@@ -489,7 +544,14 @@ const buildValidatedPayload = async ({
       typeof approvedByName === 'string' ? approvedByName.trim() : approvedByName,
     approvedAt,
     dispatcherId: dispatcherId ?? null,
-    dispatcherChecklist,
+    dispatcherChecklist: normalizedChecklist,
+    inDispatchAt:
+      normalizePreparationEtaFields({
+        status,
+        approvedAt,
+        inDispatchAt,
+        existingInDispatchAt: existingPreparation?.inDispatchAt,
+      }).inDispatchAt,
     completedAt,
     readyForReleaseAt,
   };
@@ -544,6 +606,7 @@ export const createPreparation = asyncHandler(async (req, res) => {
     requireAvailableVehicle: true,
   });
   const preparation = await Preparation.create(normalizedPayload);
+  await syncPreparationEtaPrediction(preparation.id);
   await reconcilePreparationVehicleStatus(normalizedPayload.vehicleId);
   const savedPreparation = await requirePreparation(preparation.id);
   dispatchNotificationTask(
@@ -573,7 +636,6 @@ export const updatePreparation = asyncHandler(async (req, res) => {
   }
 
   const validatedPayload = await buildValidatedPayload({
-    id: existingPreparation.id,
     vehicleId: req.body?.vehicleId ?? existingPreparation.vehicleId,
     requestedServices:
       req.body?.requestedServices ?? existingPreparation.requestedServices,
@@ -603,6 +665,7 @@ export const updatePreparation = asyncHandler(async (req, res) => {
         : req.body.dispatcherId,
     dispatcherChecklist:
       req.body?.dispatcherChecklist ?? existingPreparation.dispatcherChecklist,
+    inDispatchAt: req.body?.inDispatchAt ?? existingPreparation.inDispatchAt,
     completedAt: req.body?.completedAt ?? existingPreparation.completedAt,
     readyForReleaseAt:
       req.body?.readyForReleaseAt ?? existingPreparation.readyForReleaseAt,
@@ -610,6 +673,7 @@ export const updatePreparation = asyncHandler(async (req, res) => {
       req.body?.requestedByUserId === undefined
         ? existingPreparation.requestedByUserId
         : req.body.requestedByUserId,
+    existingPreparation,
   });
   const normalizedPayload = {
     ...validatedPayload,
@@ -637,6 +701,7 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     new: true,
     runValidators: true,
   });
+  await syncPreparationEtaPrediction(req.params.id);
 
   await Promise.all([
     reconcilePreparationVehicleStatus(existingPreparation.vehicleId),
@@ -659,6 +724,17 @@ export const updatePreparation = asyncHandler(async (req, res) => {
   sendSuccess(res, {
     data: savedPreparation,
     message: 'Preparation record updated successfully.',
+  });
+});
+
+export const retrainPreparationEta = asyncHandler(async (req, res) => {
+  void req;
+
+  const result = await retrainPreparationEtaModel();
+
+  sendSuccess(res, {
+    data: result,
+    message: 'Preparation ETA model retrained successfully.',
   });
 });
 
