@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { PreparationEtaArtifact } from '../models/PreparationEtaArtifact.js';
 import { Preparation } from '../models/Preparation.js';
 
 const serviceTypes = [
@@ -12,6 +13,8 @@ const serviceTypes = [
   'maintenance',
   'painting',
 ];
+
+const PREPARATION_ETA_ARTIFACT_KEY = 'preparation_eta_default';
 
 const getRequestedServiceCount = (payload) =>
   (Array.isArray(payload?.requestedServices) ? payload.requestedServices.length : 0) +
@@ -200,6 +203,48 @@ const postJson = async (path, payload) => {
   return parsed;
 };
 
+export const getStoredPreparationEtaArtifact = async () =>
+  PreparationEtaArtifact.findOne({ key: PREPARATION_ETA_ARTIFACT_KEY }).lean();
+
+const storePreparationEtaArtifact = async (result) => {
+  const blobBase64 = result?.modelBundle?.blobBase64;
+
+  if (!blobBase64) {
+    console.log('[Preparation ETA][Backend] No serialized model bundle returned to store.', {
+      source: result?.source ?? null,
+      trainedRecords: result?.trainedRecords ?? null,
+    });
+    return null;
+  }
+
+  const artifact = await PreparationEtaArtifact.findOneAndUpdate(
+    { key: PREPARATION_ETA_ARTIFACT_KEY },
+    {
+      key: PREPARATION_ETA_ARTIFACT_KEY,
+      source: result?.source ?? 'model',
+      trainedRecords: Math.max(Number(result?.trainedRecords ?? 0), 0),
+      modelBundle: {
+        blobBase64,
+        metadata: result?.modelBundle?.metadata ?? {},
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+    }
+  ).lean();
+
+  console.log('[Preparation ETA][Backend] Serialized model bundle stored in MongoDB.', {
+    artifactId: artifact?.id ?? null,
+    trainedRecords: artifact?.trainedRecords ?? 0,
+    source: artifact?.source ?? null,
+    blobLength: blobBase64.length,
+  });
+
+  return artifact;
+};
+
 export const predictPreparationEta = async (preparation) => {
   const payload = buildPredictionPayload(preparation);
 
@@ -322,6 +367,8 @@ export const retrainPreparationEtaModel = async () => {
   const result = await postJson('/train', {
     rows: trainingRows,
   });
+
+  await storePreparationEtaArtifact(result);
 
   console.log('[Preparation ETA][Backend] ETA model retraining finished.', {
     trainedRecords: result?.trainedRecords ?? null,

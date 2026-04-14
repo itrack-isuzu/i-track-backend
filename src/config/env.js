@@ -189,6 +189,9 @@ export const env = {
   preparationEtaAiUrl:
     toOptionalString(process.env.PREPARATION_ETA_AI_URL) ?? 'http://127.0.0.1:8001',
   preparationEtaAiKey: toOptionalString(process.env.PREPARATION_ETA_AI_KEY),
+  preparationEtaModelSyncKey: toOptionalString(
+    process.env.PREPARATION_ETA_MODEL_SYNC_KEY
+  ),
   passwordResetOtpExpiresMinutes: toNumber(
     process.env.PASSWORD_RESET_OTP_EXPIRES_MINUTES,
     10
