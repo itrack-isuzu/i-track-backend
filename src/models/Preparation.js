@@ -29,6 +29,10 @@ const dispatcherChecklistStepSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    completedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     _id: false,
@@ -128,6 +132,10 @@ const preparationSchema = new mongoose.Schema(
       type: [dispatcherChecklistStepSchema],
       default: [],
     },
+    inDispatchAt: {
+      type: Date,
+      default: null,
+    },
     completedAt: {
       type: Date,
       default: null,
@@ -148,6 +156,20 @@ const preparationSchema = new mongoose.Schema(
       type: String,
       default: null,
       trim: true,
+    },
+    predictedTotalMinutes: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    predictedRemainingMinutes: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    predictionGeneratedAt: {
+      type: Date,
+      default: null,
     },
   },
   baseSchemaOptions

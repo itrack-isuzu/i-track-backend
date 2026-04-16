@@ -4,6 +4,7 @@ import { env } from './config/env.js';
 import { DriverAllocation } from './models/DriverAllocation.js';
 import { Notification } from './models/Notification.js';
 import { Preparation } from './models/Preparation.js';
+import { PreparationEtaArtifact } from './models/PreparationEtaArtifact.js';
 import { TestDriveBooking } from './models/TestDriveBooking.js';
 import { UnitAgentAllocation } from './models/UnitAgentAllocation.js';
 import { User } from './models/User.js';
@@ -18,6 +19,7 @@ const bootstrapServer = async () => {
     DriverAllocation,
     UnitAgentAllocation,
     Preparation,
+    PreparationEtaArtifact,
     TestDriveBooking,
   ];
 
