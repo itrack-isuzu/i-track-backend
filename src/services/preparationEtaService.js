@@ -90,8 +90,9 @@ export const buildPredictionPayload = (preparation) => {
   const detailingChecklistItem = checklist.find(
     (item) => item.id === 'detailing' || item.label.toLowerCase() === 'detailing'
   );
+  //repalace completedAt to readyForReleaseAt 
   const inDispatchAt = toDate(preparation?.inDispatchAt);
-  const completedAt = toDate(preparation?.completedAt);
+  const readyForReleaseAt = toDate(preparation?.readyForReleaseAt);
 
   return {
     preparationId: String(preparation?.id ?? preparation?._id ?? ''),
@@ -110,7 +111,7 @@ export const buildPredictionPayload = (preparation) => {
     dispatchStartHour: inDispatchAt ? inDispatchAt.getHours() : null,
     dispatchStartDayOfWeek: inDispatchAt ? inDispatchAt.getDay() : null,
     inDispatchAt: inDispatchAt?.toISOString() ?? null,
-    completedAt: completedAt?.toISOString() ?? null,
+    readyForReleaseAt: readyForReleaseAt?.toISOString() ?? null,
     serviceFlags: Object.fromEntries(
       serviceTypes.map((serviceType) => [serviceType, requestedServices.has(serviceType)])
     ),
@@ -330,14 +331,14 @@ export const syncPreparationEtaPrediction = async (preparationId) => {
 export const retrainPreparationEtaModel = async () => {
   const completedPreparations = await Preparation.find({
     inDispatchAt: { $ne: null },
-    completedAt: { $ne: null },
+    readyForReleaseAt: { $ne: null },
   }).lean();
 
   const trainingRows = completedPreparations
     .map((preparation) => {
       const payload = buildPredictionPayload(preparation);
       const start = toDate(preparation.inDispatchAt);
-      const end = toDate(preparation.completedAt);
+      const end = toDate(preparation.readyForReleaseAt ?? preparation.completedAt);
 
       if (!start || !end || end <= start) {
         return null;
