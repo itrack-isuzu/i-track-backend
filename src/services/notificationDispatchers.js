@@ -308,8 +308,8 @@ export const notifyDriverAllocationUpdated = async ({
       createNotificationsForUsers({
         userIds: [previousDriverId],
         type: 'driver',
-        title: 'Dispatch reassigned',
-        message: `${vehicleLabel} dispatch was reassigned to another driver.`,
+        title: 'Drive reassigned',
+        message: `${vehicleLabel} drive was reassigned to another driver.`,
         data: {
           entityType: 'driver_allocation',
           entityId: nextAllocation.id,
@@ -326,7 +326,7 @@ export const notifyDriverAllocationUpdated = async ({
         type: 'driver',
         title:
           previousDriverId && previousDriverId === nextDriverId
-            ? 'Dispatch updated'
+            ? 'Drive updated'
             : 'New Driving Booking Assigned',
         message: buildDriverAllocationReferenceMessage(nextAllocation),
         data: {
@@ -349,8 +349,8 @@ export const notifyDriverAllocationUpdated = async ({
       createNotificationsForUsers({
         userIds: [nextDriverId],
         type: 'driver',
-        title: 'Dispatch cancelled',
-        message: `${vehicleLabel} dispatch was cancelled.`,
+        title: 'Drive cancelled',
+        message: `${vehicleLabel} drive was cancelled.`,
         data: {
           entityType: 'driver_allocation',
           entityId: nextAllocation.id,
@@ -475,10 +475,10 @@ export const notifyDriverAllocationDeleted = async (allocation) => {
       createNotificationsForUsers({
         userIds: [driverId],
         type: 'driver',
-        title: 'Dispatch removed',
+        title: 'Drive removed',
         message: `${buildDriverAllocationReferenceMessage(
           allocation
-        )} This dispatch was removed.`,
+        )} This drive was removed.`,
         data: notificationData,
       })
     );
@@ -498,6 +498,28 @@ export const notifyDriverAllocationDeleted = async (allocation) => {
 
   return Promise.all(tasks);
 };
+
+export const notifyDriverAllocationCompletionRequested = async (allocation) =>
+  createNotificationsForRoles({
+    roles: ADMIN_APPROVER_ROLES,
+    type: 'alert',
+    title: 'Trip completion requested',
+    message: `${
+      getFullName(allocation?.driverId) || 'The driver'
+    } requested an admin/supervisor review before ending the trip for ${getVehicleLabel(
+      allocation?.vehicleId
+    )}.`,
+    data: {
+      entityType: 'driver_allocation',
+      entityId: allocation?.id,
+      vehicleId: getId(allocation?.vehicleId),
+      driverId: getId(allocation?.driverId),
+      status: allocation?.status,
+      requestType: 'trip_completion_review',
+      currentLocation: allocation?.currentLocation ?? null,
+      destinationLocation: allocation?.destinationLocation ?? null,
+    },
+  });
 
 export const notifyPreparationCreated = async (preparation) => {
   const vehicleLabel = getVehicleLabel(preparation?.vehicleId);

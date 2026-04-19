@@ -6,6 +6,7 @@ import { analyzeDriverBehavior } from '../services/driverAi/behaviorAnalysisServ
 import {
   isDriverInTransitHeartbeatDue,
   notifyDriverAllocationCreated,
+  notifyDriverAllocationCompletionRequested,
   notifyDriverAllocationDeleted,
   notifyDriverInTransitHeartbeat,
   notifyDriverAllocationUpdated,
@@ -496,6 +497,34 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
       },
     },
     message: 'Driver live location updated successfully.',
+  });
+});
+
+export const requestDriverAllocationCompletion = asyncHandler(async (req, res) => {
+  const allocation = await requireAllocation(req.params.id);
+
+  if (allocation.status !== IN_TRANSIT_ALLOCATION_STATUS) {
+    const error = new Error(
+      'Trip completion can only be requested while the trip is in transit.'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const notifications =
+    await notifyDriverAllocationCompletionRequested(allocation);
+
+  if (!notifications.length) {
+    const error = new Error(
+      'No active admin/supervisor accounts are available to receive this request.'
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  sendSuccess(res, {
+    data: allocation,
+    message: 'Admin/supervisor notified successfully.',
   });
 });
 
