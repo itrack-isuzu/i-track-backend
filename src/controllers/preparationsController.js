@@ -1,5 +1,4 @@
 import { Preparation } from '../models/Preparation.js';
-import { env } from '../config/env.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import {
@@ -8,6 +7,7 @@ import {
   notifyPreparationUpdated,
 } from '../services/notificationDispatchers.js';
 import {
+  getPreparationEtaRuntimeState,
   getStoredPreparationEtaArtifact,
   retrainPreparationEtaModel,
   syncPreparationEtaPrediction,
@@ -21,21 +21,6 @@ const dispatchNotificationTask = (task, label) => {
   void task.catch((error) => {
     console.error(`Notification dispatch failed (${label}):`, error);
   });
-};
-
-const ensurePreparationEtaModelSyncAuthorized = (req) => {
-  if (!env.preparationEtaModelSyncKey) {
-    return;
-  }
-
-  const authorization = String(req.headers.authorization ?? '').trim();
-  const expectedAuthorization = `Bearer ${env.preparationEtaModelSyncKey}`;
-
-  if (authorization !== expectedAuthorization) {
-    const error = new Error('Unauthorized.');
-    error.statusCode = 401;
-    throw error;
-  }
 };
 
 const preparationPopulation = [
@@ -756,23 +741,24 @@ export const retrainPreparationEta = asyncHandler(async (req, res) => {
 });
 
 export const getPreparationEtaModel = asyncHandler(async (req, res) => {
-  ensurePreparationEtaModelSyncAuthorized(req);
+  void req;
 
   const artifact = await getStoredPreparationEtaArtifact();
+  const runtimeState = getPreparationEtaRuntimeState();
 
   sendSuccess(res, {
-    data: artifact
-      ? {
-          key: artifact.key,
-          source: artifact.source,
-          trainedRecords: artifact.trainedRecords,
-          modelBundle: artifact.modelBundle ?? null,
-          updatedAt: artifact.updatedAt ?? null,
-        }
-      : null,
+    data: {
+      artifact,
+      runtime: {
+        modelReady: runtimeState.modelReady,
+        loadedFrom: runtimeState.loadedFrom,
+        modelAvailability: runtimeState.modelAvailability,
+        metadata: runtimeState.metadata,
+      },
+    },
     message: artifact
       ? 'Preparation ETA model artifact fetched successfully.'
-      : 'No preparation ETA model artifact is stored yet.',
+      : 'No preparation ETA model artifact is stored yet; fallback mode is active.',
   });
 });
 

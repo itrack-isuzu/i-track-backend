@@ -22,13 +22,22 @@ const preparationEtaArtifactSchema = new mongoose.Schema(
       min: 0,
     },
     modelBundle: {
-      blobBase64: {
+      format: {
         type: String,
+        default: null,
+        trim: true,
+      },
+      payload: {
+        type: mongoose.Schema.Types.Mixed,
         default: null,
       },
       metadata: {
         type: mongoose.Schema.Types.Mixed,
         default: {},
+      },
+      blobBase64: {
+        type: String,
+        default: null,
       },
     },
   },

@@ -9,6 +9,7 @@ import { TestDriveBooking } from './models/TestDriveBooking.js';
 import { UnitAgentAllocation } from './models/UnitAgentAllocation.js';
 import { User } from './models/User.js';
 import { Vehicle } from './models/Vehicle.js';
+import { initializePreparationEtaModel } from './services/preparationEtaService.js';
 import { ensureSeedData } from './services/seedService.js';
 
 const bootstrapServer = async () => {
@@ -25,6 +26,7 @@ const bootstrapServer = async () => {
 
   await connectDatabase();
   const ensuredCollections = await ensureCollections(models);
+  await initializePreparationEtaModel();
 
   if (env.autoSeed) {
     const seedSummary = await ensureSeedData();
