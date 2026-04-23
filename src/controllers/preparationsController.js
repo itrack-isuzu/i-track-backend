@@ -107,6 +107,22 @@ const normalizeChecklistItems = (dispatcherChecklist, existingChecklist = []) =>
   });
 };
 
+const normalizeRequestedPreparationStatus = ({
+  status,
+  readyForReleaseAt,
+  existingStatus,
+}) => {
+  if (status !== 'ready_for_release') {
+    return status;
+  }
+
+  if (toOptionalDate(readyForReleaseAt)) {
+    return status;
+  }
+
+  return existingStatus === 'completed' ? 'completed' : 'in_dispatch';
+};
+
 const normalizePreparationEtaFields = ({
   status,
   approvedAt,
@@ -521,6 +537,11 @@ const buildValidatedPayload = async ({
     customerContactNo,
     'Customer contact number'
   );
+  const normalizedStatus = normalizeRequestedPreparationStatus({
+    status,
+    readyForReleaseAt,
+    existingStatus: existingPreparation?.status,
+  });
   const normalizedChecklist = normalizeChecklistItems(
     dispatcherChecklist,
     existingPreparation?.dispatcherChecklist
@@ -535,7 +556,7 @@ const buildValidatedPayload = async ({
       typeof customerName === 'string' ? customerName.trim() : customerName,
     customerContactNo: normalizedPhoneNumber,
     notes: typeof notes === 'string' ? notes.trim() : notes,
-    status,
+    status: normalizedStatus,
     progress,
     requestedByRole,
     requestedByName:
@@ -549,7 +570,7 @@ const buildValidatedPayload = async ({
     dispatcherChecklist: normalizedChecklist,
     inDispatchAt:
       normalizePreparationEtaFields({
-        status,
+        status: normalizedStatus,
         approvedAt,
         inDispatchAt,
         existingInDispatchAt: existingPreparation?.inDispatchAt,
