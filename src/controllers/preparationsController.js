@@ -123,6 +123,18 @@ const normalizeRequestedPreparationStatus = ({
   return existingStatus === 'completed' ? 'completed' : 'in_dispatch';
 };
 
+const normalizeRequestedReadyForReleaseAt = ({
+  status,
+  readyForReleaseAt,
+  existingReadyForReleaseAt,
+}) => {
+  if (status === 'ready_for_release') {
+    return readyForReleaseAt ?? existingReadyForReleaseAt ?? null;
+  }
+
+  return null;
+};
+
 const normalizePreparationEtaFields = ({
   status,
   approvedAt,
@@ -658,6 +670,10 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     throw error;
   }
 
+  const requestedStatus = req.body?.status ?? existingPreparation.status;
+  const requestedReadyForReleaseAt =
+    req.body?.readyForReleaseAt === undefined ? null : req.body.readyForReleaseAt;
+
   const validatedPayload = await buildValidatedPayload({
     vehicleId: req.body?.vehicleId ?? existingPreparation.vehicleId,
     requestedServices:
@@ -669,7 +685,7 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     customerContactNo:
       req.body?.customerContactNo ?? existingPreparation.customerContactNo,
     notes: req.body?.notes ?? existingPreparation.notes,
-    status: req.body?.status ?? existingPreparation.status,
+    status: requestedStatus,
     progress: req.body?.progress ?? existingPreparation.progress,
     requestedByRole:
       req.body?.requestedByRole ?? existingPreparation.requestedByRole,
@@ -690,8 +706,11 @@ export const updatePreparation = asyncHandler(async (req, res) => {
       req.body?.dispatcherChecklist ?? existingPreparation.dispatcherChecklist,
     inDispatchAt: req.body?.inDispatchAt ?? existingPreparation.inDispatchAt,
     completedAt: req.body?.completedAt ?? existingPreparation.completedAt,
-    readyForReleaseAt:
-      req.body?.readyForReleaseAt ?? existingPreparation.readyForReleaseAt,
+    readyForReleaseAt: normalizeRequestedReadyForReleaseAt({
+      status: requestedStatus,
+      readyForReleaseAt: requestedReadyForReleaseAt,
+      existingReadyForReleaseAt: existingPreparation.readyForReleaseAt,
+    }),
     requestedByUserId:
       req.body?.requestedByUserId === undefined
         ? existingPreparation.requestedByUserId
