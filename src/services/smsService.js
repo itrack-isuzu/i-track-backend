@@ -79,6 +79,11 @@ const isFmcsmsConfigured = () =>
       env.fmcsmsSenderId
   );
 
+const getUnismsEndpoint = () => `${env.unismsApiUrl.replace(/\/+$/, '')}/sms`;
+
+const isUnismsConfigured = () =>
+  Boolean(env.smsEnabled && env.unismsApiUrl && env.unismsApiSecretKey);
+
 const isTwilioConfigured = () =>
   Boolean(
     env.smsEnabled &&
@@ -495,6 +500,81 @@ const sendPreparationCompletionSmsViaTwilio = async ({
   };
 };
 
+const sendPreparationCompletionSmsViaUnisms = async ({
+  customerName,
+  phoneNumber,
+  vehicleLabel,
+}) => {
+  if (!isUnismsConfigured()) {
+    console.warn(
+      'Preparation completion SMS skipped because UniSMS is not configured.'
+    );
+
+    return {
+      skipped: true,
+      reason: 'unconfigured',
+    };
+  }
+
+  const smsRecipient = toPhilippineE164(phoneNumber);
+
+  if (!smsRecipient.startsWith('+63')) {
+    throw new Error('Customer contact number is not in a supported SMS format.');
+  }
+
+  const payload = {
+    recipient: smsRecipient,
+    content: buildPreparationCompletionMessage({
+      customerName,
+      vehicleLabel,
+    }),
+  };
+
+  const response = await fetch(getUnismsEndpoint(), {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(
+        `${env.unismsApiSecretKey}:`
+      ).toString('base64')}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const rawResponseBody = await response.text();
+  const responseBody = parseJsonSafely(rawResponseBody) ?? rawResponseBody;
+
+  if (!response.ok) {
+    throw new Error(
+      String(
+        (typeof responseBody === 'object' && responseBody !== null
+          ? responseBody.message ??
+            responseBody.detail ??
+            responseBody.error
+          : responseBody) || 'Unable to send preparation completion SMS.'
+      ).trim()
+    );
+  }
+
+  return {
+    skipped: false,
+    provider: 'unisms',
+    sid:
+      typeof responseBody === 'object' && responseBody !== null
+        ? responseBody.id ??
+          responseBody.sid ??
+          responseBody.messageId ??
+          responseBody.referenceId ??
+          null
+        : null,
+    to: smsRecipient,
+    meta:
+      typeof responseBody === 'object' && responseBody !== null
+        ? responseBody
+        : undefined,
+  };
+};
+
 export const sendPreparationCompletionSms = async ({
   customerName,
   phoneNumber,
@@ -513,6 +593,7 @@ export const sendPreparationCompletionSms = async ({
     provider: env.smsProvider,
     fortmedConfigured: isFortmedConfigured(),
     fmcsmsConfigured: isFmcsmsConfigured(),
+    unismsConfigured: isUnismsConfigured(),
     twilioConfigured: isTwilioConfigured(),
     toNumber: maskPhoneNumber(toPhilippineE164(phoneNumber)),
   });
@@ -527,6 +608,14 @@ export const sendPreparationCompletionSms = async ({
 
   if (env.smsProvider === 'fmcsms') {
     return sendPreparationCompletionSmsViaFmcsms({
+      customerName,
+      phoneNumber,
+      vehicleLabel,
+    });
+  }
+
+  if (env.smsProvider === 'unisms') {
+    return sendPreparationCompletionSmsViaUnisms({
       customerName,
       phoneNumber,
       vehicleLabel,

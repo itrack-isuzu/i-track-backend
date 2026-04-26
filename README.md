@@ -88,7 +88,9 @@ When backend SMS variables are missing, the backend now falls back to these UI e
 Add these variables to `.env`:
 
 - `SMS_ENABLED=true`
-- `SMS_PROVIDER=fortmed`, `SMS_PROVIDER=fmcsms`, or `SMS_PROVIDER=twilio`
+- `SMS_PROVIDER=unisms`, `SMS_PROVIDER=fortmed`, `SMS_PROVIDER=fmcsms`, or `SMS_PROVIDER=twilio`
+- `UNISMS_API_URL`
+- `UNISMS_API_SECRET_KEY`
 - `FORTMED_API_URL`
 - `FORTMED_API_KEY`
 - `FORTMED_SENDER_ID`
@@ -105,12 +107,12 @@ Add these variables to `.env`:
 Recommended local setup:
 
 - Keep your frontend at `NEXT_PUBLIC_API_URL=http://localhost:4000/api`
-- Run the backend with your Fortmed credentials in local `.env`
+- Run the backend with your UniSMS credentials in local `.env`
 - From the web app, open Preparation and confirm "Ready for Release"
 
 Recommended deployed setup:
 
-- Add the same Fortmed SMS variables in your deployed backend environment, such as Render
+- Add the same UniSMS SMS variables in your deployed backend environment, such as Render
 - Keep the web frontend pointing to the deployed backend URL
 - Redeploy the backend after saving the new environment variables
 

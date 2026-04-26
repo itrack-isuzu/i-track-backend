@@ -106,6 +106,10 @@ const normalizeSmsProvider = (value) => {
     return 'fmcsms';
   }
 
+  if (normalizedValue.startsWith('unisms')) {
+    return 'unisms';
+  }
+
   if (normalizedValue.startsWith('twilio')) {
     return 'twilio';
   }
@@ -147,6 +151,8 @@ export const env = {
     getFallbackEnvValue('FMCSMS_PASSWORD') ||
     getFallbackEnvValue('FMCSMS_API_KEY')
       ? 'fmcsms'
+      : getFallbackEnvValue('UNISMS_API_SECRET_KEY')
+      ? 'unisms'
       : 'twilio')),
   fortmedApiUrl:
     toOptionalString(
@@ -178,6 +184,12 @@ export const env = {
   fmcsmsSenderId: toOptionalString(
     getFallbackEnvValue('FMCSMS_SENDER_ID') ??
       getFallbackEnvValue('FMCSMS_SENDER')
+  ),
+  unismsApiUrl:
+    toOptionalString(getFallbackEnvValue('UNISMS_API_URL')) ??
+    'https://unismsapi.com/api',
+  unismsApiSecretKey: toOptionalString(
+    getFallbackEnvValue('UNISMS_API_SECRET_KEY')
   ),
   twilioAccountSid: toOptionalString(getFallbackEnvValue('TWILIO_ACCOUNT_SID')),
   twilioAuthToken: toOptionalString(getFallbackEnvValue('TWILIO_AUTH_TOKEN')),
