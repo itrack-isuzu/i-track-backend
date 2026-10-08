@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
+import { AuthSession } from '../models/AuthSession.js';
 import { User } from '../models/User.js';
 import { AuthEvent } from '../models/AuthEvent.js';
 import { sendPasswordResetOtpEmail } from '../services/emailjsService.js';
@@ -215,9 +216,12 @@ export const login = asyncHandler(async (req, res) => {
     eventType: 'login',
   });
 
+  const token = randomUUID();
+  await AuthSession.create({ token, userId: user.id });
+
   sendSuccess(res, {
     data: {
-      token: randomUUID(),
+      token,
       user: populatedUser,
     },
     message: 'Sign in successful.',
@@ -225,7 +229,8 @@ export const login = asyncHandler(async (req, res) => {
 });
 
 export const logout = asyncHandler(async (req, res) => {
-  const userId = toOptionalString(req.body?.userId);
+  await AuthSession.deleteOne({ token: req.authToken });
+  const userId = req.authUser.id;
   const fallbackName = toOptionalString(req.body?.name);
   const fallbackEmail = toOptionalString(req.body?.email);
   const fallbackRole = toOptionalString(req.body?.role);
@@ -256,6 +261,9 @@ export const listAuthEvents = asyncHandler(async (req, res) => {
 
 export const changePassword = asyncHandler(async (req, res) => {
   const { userId, currentPassword, nextPassword } = req.body ?? {};
+  if (String(userId) !== req.authUser.id) {
+    throw createHttpError('You can only change your own password.', 403);
+  }
   const user = await User.findById(userId).select('+passwordHash');
 
   if (!user) {
@@ -273,6 +281,9 @@ export const changePassword = asyncHandler(async (req, res) => {
     );
   }
 
+  if (await verifyPassword(nextPassword, user.passwordHash)) {
+    throw createHttpError('Choose a password different from your current password.');
+  }
   user.passwordHash = await hashPassword(nextPassword);
   user.mustChangePassword = false;
   await user.save();
@@ -357,6 +368,9 @@ export const resetPasswordWithOtp = asyncHandler(async (req, res) => {
     includePasswordHash: true,
   });
 
+  if (await verifyPassword(nextPassword, user.passwordHash)) {
+    throw createHttpError('Choose a password different from your current password.');
+  }
   user.passwordHash = await hashPassword(nextPassword);
   user.mustChangePassword = false;
   clearPasswordResetState(user);

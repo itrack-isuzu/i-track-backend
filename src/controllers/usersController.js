@@ -258,7 +258,7 @@ export const createUser = asyncHandler(async (req, res) => {
   const user = await User.create({
     ...validatedPayload,
     passwordHash: await hashPassword(normalizedPassword),
-    mustChangePassword: Boolean(sendCredentialsEmail),
+    mustChangePassword: true,
   });
 
   try {

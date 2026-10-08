@@ -173,19 +173,18 @@ export const scanDriverSafetyAlerts = async (detectedAt = new Date()) => {
 
       const gpsStaleSeconds = getGpsStaleSeconds(allocation, detectedAt);
 
-      if (
-        gpsStaleSeconds !== null &&
-        isCooldownElapsed(allocation.aiState?.lastGpsLostNotifiedAt, detectedAt)
-      ) {
-        await markSafetyAlertNotified(
-          allocation.id,
-          'lastGpsLostNotifiedAt',
-          detectedAt
-        );
+      if (gpsStaleSeconds === null && allocation.aiState?.lastGpsLostNotifiedAt) {
+        await DriverAllocation.findByIdAndUpdate(allocation.id, {
+          $set: { 'aiState.lastGpsLostNotifiedAt': null },
+        });
+      }
+
+      if (gpsStaleSeconds !== null && !allocation.aiState?.lastGpsLostNotifiedAt) {
         await notifyDriverGpsConnectionLost(allocation, {
           staleSeconds: gpsStaleSeconds,
           detectedAt,
         });
+        await markSafetyAlertNotified(allocation.id, 'lastGpsLostNotifiedAt', detectedAt);
         summary.gpsLostAlerts += 1;
       }
 

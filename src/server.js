@@ -7,6 +7,7 @@ import { Preparation } from './models/Preparation.js';
 import { PreparationEtaArtifact } from './models/PreparationEtaArtifact.js';
 import { TestDriveBooking } from './models/TestDriveBooking.js';
 import { UnitAgentAllocation } from './models/UnitAgentAllocation.js';
+import { AuthSession } from './models/AuthSession.js';
 import { User } from './models/User.js';
 import { Vehicle } from './models/Vehicle.js';
 import { initializePreparationEtaModel } from './services/preparationEtaService.js';
@@ -16,6 +17,7 @@ import { startDriverSafetyMonitor } from './services/driverSafetyMonitorService.
 const bootstrapServer = async () => {
   const models = [
     User,
+    AuthSession,
     Vehicle,
     Notification,
     DriverAllocation,

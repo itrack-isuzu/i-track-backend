@@ -529,7 +529,7 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
     isDriverInTransitHeartbeatDue(existingAllocation, currentLocation.timestamp);
   const updatePayload = analysisResult.acceptedPoint
     ? {
-        currentLocation: analysisResult.currentLocation,
+        currentLocation: { ...analysisResult.currentLocation, updatedAt: new Date() },
         routeProgress: analysisResult.routeProgress,
         aiState: analysisResult.aiState,
         behaviorEvents: analysisResult.behaviorEvents,
@@ -539,6 +539,10 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
     : {
         aiState: analysisResult.aiState,
       };
+
+  if (analysisResult.acceptedPoint) {
+    updatePayload.aiState.lastGpsLostNotifiedAt = null;
+  }
 
   if (heartbeatDue) {
     updatePayload.aiState = {

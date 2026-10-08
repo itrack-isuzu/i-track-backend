@@ -12,6 +12,7 @@ import {
 
 const router = Router();
 
+router.get('/me', (req, res) => res.json({ success: true, data: req.authUser }));
 router.post('/login', login);
 router.post('/logout', logout);
 router.get('/events', listAuthEvents);

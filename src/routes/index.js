@@ -12,7 +12,10 @@ import usersRoutes from './usersRoutes.js';
 import vehiclesRoutes from './vehiclesRoutes.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
+import { accountAccess } from '../middleware/accountAccess.js';
+
 const router = Router();
+router.use(accountAccess);
 
 const databaseStateByCode = {
   0: 'disconnected',

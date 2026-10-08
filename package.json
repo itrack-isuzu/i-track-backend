@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "seed": "node src/scripts/seed.js"
+    "seed": "node src/scripts/seed.js",
+    "test": "node tests/accountAccess.test.js && node tests/authFlow.test.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

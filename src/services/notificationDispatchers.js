@@ -3,6 +3,9 @@ import {
   createNotificationsForUsers,
 } from './notificationsService.js';
 
+import { UnitAgentAllocation } from '../models/UnitAgentAllocation.js';
+import { User } from '../models/User.js';
+
 const ADMIN_APPROVER_ROLES = ['admin', 'supervisor'];
 const DISPATCHER_ROLE = ['dispatcher'];
 const IN_TRANSIT_HEARTBEAT_INTERVAL_MS = 2 * 60 * 1000;
@@ -163,29 +166,13 @@ const notifyDriverSafetyAlert = async ({
     safetyAlertType,
     detectedAt,
   };
-  const tasks = [
-    createNotificationsForRoles({
-      roles: ADMIN_APPROVER_ROLES,
-      type: 'alert',
-      title,
-      message,
-      data,
-    }),
-  ];
-
-  if (managerId) {
-    tasks.push(
-      createNotificationsForUsers({
-        userIds: [managerId],
-        type: 'alert',
-        title,
-        message,
-        data,
-      })
-    );
-  }
-
-  return Promise.all(tasks);
+  const unitAllocation = await UnitAgentAllocation.findOne({ vehicleId: getId(allocation.vehicleId) });
+  const approvers = await User.find({ role: { $in: ADMIN_APPROVER_ROLES }, isActive: true }).select('_id');
+  const userIds = [...new Set([
+    ...approvers.map(getId), managerId,
+    getId(unitAllocation?.managerId), getId(unitAllocation?.salesAgentId),
+  ].filter(Boolean))];
+  return createNotificationsForUsers({ userIds, type: 'alert', title, message, data });
 };
 
 export const notifyDriverGpsConnectionLost = async (allocation, details = {}) => {
@@ -253,29 +240,13 @@ export const notifyDriverStopTripRequested = async (allocation) => {
     stopRequestReason: reason ?? '',
     currentLocation: allocation?.currentLocation ?? null,
   };
-  const tasks = [
-    createNotificationsForRoles({
-      roles: ADMIN_APPROVER_ROLES,
-      type: 'alert',
-      title,
-      message,
-      data,
-    }),
-  ];
-
-  if (managerId) {
-    tasks.push(
-      createNotificationsForUsers({
-        userIds: [managerId],
-        type: 'alert',
-        title,
-        message,
-        data,
-      })
-    );
-  }
-
-  return Promise.all(tasks);
+  const unitAllocation = await UnitAgentAllocation.findOne({ vehicleId: getId(allocation.vehicleId) });
+  const approvers = await User.find({ role: { $in: ADMIN_APPROVER_ROLES }, isActive: true }).select('_id');
+  const userIds = [...new Set([
+    ...approvers.map(getId), managerId,
+    getId(unitAllocation?.managerId), getId(unitAllocation?.salesAgentId),
+  ].filter(Boolean))];
+  return createNotificationsForUsers({ userIds, type: 'alert', title, message, data });
 };
 
 export const notifyDriverStopTripReviewed = async ({
@@ -332,29 +303,13 @@ export const notifyDriverCompletionReviewRequested = async (allocation) => {
     routeProgress: allocation?.routeProgress ?? null,
     reviewType: 'completion_request',
   };
-  const tasks = [
-    createNotificationsForRoles({
-      roles: ADMIN_APPROVER_ROLES,
-      type: 'alert',
-      title,
-      message,
-      data,
-    }),
-  ];
-
-  if (managerId) {
-    tasks.push(
-      createNotificationsForUsers({
-        userIds: [managerId],
-        type: 'alert',
-        title,
-        message,
-        data,
-      })
-    );
-  }
-
-  return Promise.all(tasks);
+  const unitAllocation = await UnitAgentAllocation.findOne({ vehicleId: getId(allocation.vehicleId) });
+  const approvers = await User.find({ role: { $in: ADMIN_APPROVER_ROLES }, isActive: true }).select('_id');
+  const userIds = [...new Set([
+    ...approvers.map(getId), managerId,
+    getId(unitAllocation?.managerId), getId(unitAllocation?.salesAgentId),
+  ].filter(Boolean))];
+  return createNotificationsForUsers({ userIds, type: 'alert', title, message, data });
 };
 
 const didTestDriveScheduleChange = (previousBooking, nextBooking) =>
