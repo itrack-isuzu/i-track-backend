@@ -481,10 +481,11 @@ const persistPreparationEtaArtifact = async ({ modelBundle, trainedRecords, sour
   return summarizeArtifact(artifact);
 };
 
-export const predictPreparationEta = async (preparation) => {
+export const predictPreparationEta = async (preparation, { logPrediction = true } = {}) => {
   const payload = buildPredictionPayload(preparation);
+  const log = (...values) => { if (logPrediction) console.log(...values); };
 
-  console.log('[Preparation ETA][Backend] Starting ETA prediction.', {
+  log('[Preparation ETA][Backend] Starting ETA prediction.', {
     preparationId: payload.preparationId,
     status: payload.status,
     requestedServices: payload.requestedServices,
@@ -504,7 +505,7 @@ export const predictPreparationEta = async (preparation) => {
 
   if (!MODEL_STATE.model) {
     const fallbackPrediction = buildFallbackPrediction(payload);
-    console.log('[Preparation ETA][Backend] ETA prediction resolved via fallback.', {
+    log('[Preparation ETA][Backend] ETA prediction resolved via fallback.', {
       preparationId: payload.preparationId,
       predictedTotalMinutes: fallbackPrediction.predictedTotalMinutes,
       predictedRemainingMinutes: fallbackPrediction.predictedRemainingMinutes,
@@ -532,7 +533,7 @@ export const predictPreparationEta = async (preparation) => {
     modelType: MODEL_STATE.metadata?.modelType ?? 'linear_regression',
   });
 
-  console.log('[Preparation ETA][Backend] ETA prediction resolved via in-process model.', {
+  log('[Preparation ETA][Backend] ETA prediction resolved via in-process model.', {
     preparationId: payload.preparationId,
     predictedTotalMinutes: prediction.predictedTotalMinutes,
     predictedRemainingMinutes: prediction.predictedRemainingMinutes,
@@ -572,6 +573,19 @@ export const syncPreparationEtaPrediction = async (preparationId) => {
   });
 
   return prediction;
+};
+
+// Stored snapshots predate source metadata. Generate response values and their
+// provenance together instead of inferring an old snapshot's source from the
+// currently loaded model. This does not update records or train a model.
+export const buildPreparationEtaResponse = async (preparation) => {
+  const document = preparation?.toJSON?.() ?? preparation;
+  const prediction = await predictPreparationEta(document, { logPrediction: false });
+  return {
+    ...applyPredictionSnapshot(document, prediction),
+    predictionSource: prediction.source,
+    predictionFallbackReason: prediction.fallbackReason ?? null,
+  };
 };
 
 export const retrainPreparationEtaModel = async () => {

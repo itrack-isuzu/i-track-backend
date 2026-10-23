@@ -1,5 +1,7 @@
 import { User } from '../models/User.js';
 import { UserAuditEvent } from '../models/UserAuditEvent.js';
+import { AuthEvent } from '../models/AuthEvent.js';
+import { authenticatedId, entityId, isManagement, accessError } from '../middleware/operationAccess.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import {
@@ -179,7 +181,10 @@ const buildUserFilters = (query) => {
   }
 
   if (query.search) {
-    const pattern = new RegExp(query.search, 'i');
+    if (typeof query.search !== 'string' || query.search.length > 200) {
+      throw createHttpError('Search must be text of at most 200 characters.');
+    }
+    const pattern = new RegExp(query.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     filters.$or = [
       { firstName: pattern },
       { lastName: pattern },
@@ -190,6 +195,21 @@ const buildUserFilters = (query) => {
 
   return filters;
 };
+
+const userDirectoryScope = (req) => {
+  if (isManagement(req)) return {};
+  const id = authenticatedId(req);
+  const selfAndContacts = [
+    { _id: id },
+    { role: { $in: ['admin', 'supervisor', 'dispatcher', 'driver'] } },
+  ];
+  if (req.authUser.role === 'manager') selfAndContacts.push({ managerId: id });
+  if (req.authUser.managerId) selfAndContacts.push({ _id: entityId(req.authUser.managerId) });
+  return { $or: selfAndContacts };
+};
+
+// The directory supports allocation selectors without exposing push tokens or recovery state.
+const DIRECTORY_FIELDS = 'firstName lastName email phone bio role avatarUrl managerId isActive mustChangePassword lastLoginAt createdAt updatedAt';
 
 const requireUser = async (id) => {
   const user = await User.findById(id).populate(
@@ -207,18 +227,28 @@ const requireUser = async (id) => {
 };
 
 export const listUsers = asyncHandler(async (req, res) => {
-  const users = await User.find(buildUserFilters(req.query))
+  const users = await User.find({ $and: [buildUserFilters(req.query), userDirectoryScope(req)] })
+    .select(DIRECTORY_FIELDS)
     .populate('managerId', 'firstName lastName email')
     .sort({ createdAt: -1 });
 
+  const historicalLogins = await AuthEvent.aggregate([
+    { $match: { eventType: 'login', userId: { $in: users.filter((user) => !user.lastLoginAt).map((user) => user._id) } } },
+    { $group: { _id: '$userId', lastLoginAt: { $max: '$createdAt' } } },
+  ]);
+  const lastLoginByUser = new Map(historicalLogins.map((event) => [String(event._id), event.lastLoginAt]));
+
   sendSuccess(res, {
-    data: users,
+    data: users.map((user) => ({ ...user.toJSON(), lastLoginAt: user.lastLoginAt ?? lastLoginByUser.get(user.id) ?? null })),
     message: 'Users fetched successfully.',
   });
 });
 
 export const getUserById = asyncHandler(async (req, res) => {
-  const user = await requireUser(req.params.id);
+  const user = await User.findOne({ $and: [{ _id: req.params.id }, userDirectoryScope(req)] })
+    .select(DIRECTORY_FIELDS)
+    .populate('managerId', 'firstName lastName email');
+  if (!user) throw createHttpError('User not found.', 404);
 
   sendSuccess(res, {
     data: user,
@@ -227,6 +257,9 @@ export const getUserById = asyncHandler(async (req, res) => {
 });
 
 export const listUserAuditEvents = asyncHandler(async (req, res) => {
+  // Existing mobile preloads request this resource for every role. Return no
+  // privileged events to other accounts without failing unrelated report loads.
+  if (!isManagement(req)) return sendSuccess(res, { data: [], message: 'No user audit events available to your account.' });
   const auditEvents = await UserAuditEvent.find().sort({ createdAt: -1 });
 
   sendSuccess(res, {
@@ -290,12 +323,31 @@ export const createUser = asyncHandler(async (req, res) => {
 
 export const updateUser = asyncHandler(async (req, res) => {
   const { password, ...payload } = req.body ?? {};
+  const management = isManagement(req);
+  if (!management && String(req.params.id) !== authenticatedId(req)) throw accessError();
+  if (!management && Object.hasOwn(req.body ?? {}, 'password')) {
+    throw accessError('Use the authenticated change-password flow to change your password.');
+  }
+  const allowedFields = ['email', 'phone', 'firstName', 'lastName', 'bio', 'avatarUrl', 'role', 'managerId', 'isActive'];
+  if (Object.keys(payload).some((field) => !allowedFields.includes(field))) {
+    throw createHttpError('Unsupported user profile field.');
+  }
   const existingUser = await User.findById(req.params.id);
 
   if (!existingUser) {
     const error = new Error('User not found.');
     error.statusCode = 404;
     throw error;
+  }
+
+  if (!management) {
+    // Existing web/mobile profile forms echo these fields; accept unchanged values only.
+    for (const field of ['role', 'isActive', 'managerId']) {
+      if (payload[field] !== undefined && entityId(payload[field]) !== entityId(existingUser[field])) {
+        throw accessError('Role, account status, and manager assignment require an administrator or supervisor.');
+      }
+      delete payload[field];
+    }
   }
 
   const validatedPayload = await buildValidatedUserPayload({

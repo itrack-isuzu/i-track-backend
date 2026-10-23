@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { MANAGEMENT_ROLES, requireRoles, requireScopedRecord, resourceScope } from '../middleware/operationAccess.js';
 
 import {
   createUnitAgentAllocation,
@@ -9,11 +10,12 @@ import {
 } from '../controllers/unitAgentAllocationsController.js';
 
 const router = Router();
+router.use(resourceScope('unitAllocations'));
 
 router.get('/', listUnitAgentAllocations);
-router.post('/', createUnitAgentAllocation);
-router.get('/:id', getUnitAgentAllocationById);
-router.patch('/:id', updateUnitAgentAllocation);
-router.delete('/:id', deleteUnitAgentAllocation);
+router.post('/', requireRoles(...MANAGEMENT_ROLES), createUnitAgentAllocation);
+router.get('/:id', requireScopedRecord('unitAllocations'), getUnitAgentAllocationById);
+router.patch('/:id', requireRoles(...MANAGEMENT_ROLES), updateUnitAgentAllocation);
+router.delete('/:id', requireRoles(...MANAGEMENT_ROLES), deleteUnitAgentAllocation);
 
 export default router;

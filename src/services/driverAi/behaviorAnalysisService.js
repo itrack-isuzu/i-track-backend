@@ -79,7 +79,7 @@ const getRoutePoints = (allocation) => {
 };
 
 const normalizeSpeedKph = ({ incomingLocation, previousPoint }) => {
-  const directSpeed = Number(incomingLocation?.speed);
+  const directSpeed = incomingLocation?.speed == null ? NaN : Number(incomingLocation.speed) * 3.6;
 
   if (Number.isFinite(directSpeed) && directSpeed >= 0) {
     return directSpeed;
@@ -374,6 +374,15 @@ export const analyzeDriverBehavior = async ({ allocation, incomingLocation }) =>
     };
   }
 
+  // Preserve a fresh heartbeat while anchoring stationary fixes inside the GPS
+  // accuracy radius. Jitter must not count as movement or alter route progress.
+  if (previousPoint && (incomingLocation.speed == null || incomingLocation.speed < 1.5) &&
+      haversineDistanceMeters(previousPoint, analyzedPoint) < Math.max(8, Math.min(20, analyzedPoint.accuracy ?? 8))) {
+    analyzedPoint.latitude = Number(previousPoint.latitude);
+    analyzedPoint.longitude = Number(previousPoint.longitude);
+    analyzedPoint.speedKph = 0;
+  }
+
   const routePoints = getRoutePoints(allocation);
   const routeProgress = computeRouteProgress({
     point: analyzedPoint,
@@ -540,10 +549,12 @@ export const analyzeDriverBehavior = async ({ allocation, incomingLocation }) =>
     });
   }
 
-  const eventHistory = trimArray(
-    [...(allocation?.behaviorEvents ?? []), ...createdEvents],
-    DRIVER_AI_THRESHOLDS.analysis.maxBehaviorEvents
-  );
+  const recordedEvents = [...(allocation?.behaviorEvents ?? []), ...createdEvents];
+  const eventHistory = [
+    ...recordedEvents.filter((event) => event.type === 'eta_delay_exceeded'),
+    ...trimArray(recordedEvents.filter((event) => event.type !== 'eta_delay_exceeded'),
+      DRIVER_AI_THRESHOLDS.analysis.maxBehaviorEvents),
+  ];
   const nextAlerts = [...(allocation?.aiAlerts ?? [])];
 
   for (const event of createdEvents) {
@@ -584,7 +595,7 @@ export const analyzeDriverBehavior = async ({ allocation, incomingLocation }) =>
       latitude: analyzedPoint.latitude,
       longitude: analyzedPoint.longitude,
       accuracy: analyzedPoint.accuracy,
-      speed: analyzedPoint.speedKph,
+      speed: analyzedPoint.speedKph / 3.6,
       heading: analyzedPoint.heading,
       timestamp: analyzedPoint.timestamp,
       updatedAt: analyzedPoint.timestamp,

@@ -133,6 +133,7 @@ const userSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+    lastLoginAt: { type: Date, default: null, index: true },
     mustChangePassword: {
       type: Boolean,
       default: false,

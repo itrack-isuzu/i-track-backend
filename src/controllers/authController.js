@@ -199,6 +199,9 @@ export const login = asyncHandler(async (req, res) => {
     throw createHttpError('This account is currently deactivated.', 403);
   }
 
+  user.lastLoginAt = new Date();
+  await user.save();
+
   const populatedUser = await User.findById(user.id).populate(
     'managerId',
     'firstName lastName email'
@@ -229,6 +232,8 @@ export const login = asyncHandler(async (req, res) => {
 });
 
 export const logout = asyncHandler(async (req, res) => {
+  const pushToken = typeof req.body?.pushToken === 'string' ? req.body.pushToken.trim() : '';
+  if (pushToken) await User.updateOne({ _id: req.authUser.id }, { $pull: { pushTokens: { token: pushToken } } });
   await AuthSession.deleteOne({ token: req.authToken });
   const userId = req.authUser.id;
   const fallbackName = toOptionalString(req.body?.name);
@@ -250,6 +255,9 @@ export const logout = asyncHandler(async (req, res) => {
 });
 
 export const listAuthEvents = asyncHandler(async (req, res) => {
+  if (!['admin', 'supervisor'].includes(req.authUser?.role)) {
+    return sendSuccess(res, { data: [], message: 'No authentication events available to your account.' });
+  }
   const authEvents = await AuthEvent.find().sort({
     createdAt: -1,
   });

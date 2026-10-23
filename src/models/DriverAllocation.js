@@ -372,6 +372,7 @@ const driverAllocationSchema = new mongoose.Schema(
       type: stopRequestSchema,
       default: () => ({}),
     },
+    rejectionRequest: { type: stopRequestSchema, default: () => ({}) },
     notes: {
       type: String,
       default: '',

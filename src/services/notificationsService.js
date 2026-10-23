@@ -118,6 +118,16 @@ const sendPushNotifications = async ({
     try {
       const tickets = await expo.sendPushNotificationsAsync(chunk);
 
+      await Promise.all(tickets.map((ticket, index) => Notification.updateOne(
+        { _id: chunk[index].data.notificationId },
+        { $push: { pushDeliveries: {
+          token: chunk[index].to, ticketId: ticket.id,
+          status: ticket.status === 'ok' ? 'queued' : 'error',
+          error: ticket.status === 'error' ? ticket.details?.error || ticket.message : '',
+          nextCheckAt: new Date(Date.now() + 15 * 60_000),
+        } } }
+      )));
+
       tickets.forEach((ticket, index) => {
         if (ticket.status !== 'error') {
           return;
@@ -136,6 +146,9 @@ const sendPushNotifications = async ({
       });
     } catch (error) {
       console.error('Expo push chunk delivery failed:', error);
+      await Promise.all(chunk.map((item) => Notification.updateOne({ _id: item.data.notificationId }, {
+        $push: { pushDeliveries: { token: item.to, status: 'error', error: String(error.message ?? 'Push request failed').slice(0, 500) } },
+      })));
     }
   }
 
@@ -233,8 +246,8 @@ export const registerUserPushToken = async ({
 }) => {
   const normalizedToken = normalizePushToken(token);
 
-  if (!normalizedToken) {
-    throw createHttpError('Push token is required.');
+  if (!Expo.isExpoPushToken(normalizedToken)) {
+    throw createHttpError('A valid Expo push token is required.');
   }
 
   const user = await User.findById(userId);
@@ -242,6 +255,11 @@ export const registerUserPushToken = async ({
   if (!user) {
     throw createHttpError('User not found.', 404);
   }
+
+  // A physical device belongs to its current signed-in account. Do not leave
+  // its token attached to the previous account after a re-login.
+  await User.updateMany({ _id: { $ne: userId }, 'pushTokens.token': normalizedToken },
+    { $pull: { pushTokens: { token: normalizedToken } } });
 
   const nextPushTokens = (user.pushTokens ?? [])
     .filter((pushToken) => pushToken.token !== normalizedToken)

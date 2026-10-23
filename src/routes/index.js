@@ -13,9 +13,13 @@ import vehiclesRoutes from './vehiclesRoutes.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 
 import { accountAccess } from '../middleware/accountAccess.js';
+import { operationAudit } from '../middleware/operationAudit.js';
+import auditRoutes from './auditRoutes.js';
 
 const router = Router();
 router.use(accountAccess);
+router.use(operationAudit);
+router.use('/audit-events', auditRoutes);
 
 const databaseStateByCode = {
   0: 'disconnected',

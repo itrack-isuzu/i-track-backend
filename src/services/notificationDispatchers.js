@@ -164,6 +164,7 @@ const notifyDriverSafetyAlert = async ({
     currentLocation: allocation?.currentLocation ?? null,
     routeProgress: allocation?.routeProgress ?? null,
     safetyAlertType,
+    ...(safetyAlertType === 'gps_connection_lost' ? { priority: 'high' } : {}),
     detectedAt,
   };
   const unitAllocation = await UnitAgentAllocation.findOne({ vehicleId: getId(allocation.vehicleId) });
@@ -182,8 +183,8 @@ export const notifyDriverGpsConnectionLost = async (allocation, details = {}) =>
 
   return notifyDriverSafetyAlert({
     allocation,
-    title: 'Driver GPS connection lost',
-    message: `${driverName} has not sent a GPS update for ${vehicleLabel} in about ${staleMinutes} minute(s).`,
+    title: 'URGENT: Driver GPS tracking unavailable',
+    message: `${driverName} has no valid GPS update for ${vehicleLabel}${details.staleSeconds > 0 ? ` in about ${staleMinutes} minute(s)` : '; the last GPS update time is unknown'}. Open Live Tracking to view the delivery and last known position.`,
     safetyAlertType: 'gps_connection_lost',
     detectedAt: details.detectedAt,
   });

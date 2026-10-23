@@ -31,6 +31,15 @@ const notificationSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    pushDeliveries: {
+      type: [new mongoose.Schema({
+        token: String, ticketId: String,
+        status: { type: String, enum: ['queued', 'accepted', 'error', 'unknown'], required: true },
+        error: String, checkedAt: Date, nextCheckAt: Date, attempts: { type: Number, default: 0 },
+      }, { _id: false })],
+      default: [],
+      select: false,
+    },
     read: {
       type: Boolean,
       default: false,

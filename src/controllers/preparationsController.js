@@ -1,6 +1,9 @@
 import { Preparation } from '../models/Preparation.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import { DriverAllocation } from '../models/DriverAllocation.js';
+import { ACTIVE_ALLOCATION_STATUSES } from '../constants/enums.js';
+import { accessError, authenticatedId, entityId, isManagement, withAccessScope, ensureVehicleCanBeScheduled, assertWorkflowVehicleAccess } from '../middleware/operationAccess.js';
 import {
   notifyPreparationCreated,
   notifyPreparationDeleted,
@@ -11,6 +14,7 @@ import {
   getStoredPreparationEtaArtifact,
   retrainPreparationEtaModel,
   syncPreparationEtaPrediction,
+  buildPreparationEtaResponse,
 } from '../services/preparationEtaService.js';
 import { sendPreparationCompletionSms } from '../services/smsService.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
@@ -235,16 +239,18 @@ const reconcilePreparationVehicleStatus = async (vehicleId) => {
     return;
   }
 
-  const latestActivePreparation = await Preparation.findOne({
-    vehicleId,
-    status: { $in: [...activePreparationVehicleStatuses] },
-  })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .select('_id');
-
-  const nextVehicleStatus = latestActivePreparation
-    ? 'under_preparation'
-    : 'available';
+  const [latestPreparation, activeTrip, vehicle] = await Promise.all([
+    Preparation.findOne({ vehicleId, status: { $ne: 'rejected' } }).sort({ updatedAt: -1, createdAt: -1 }),
+    DriverAllocation.findOne({ vehicleId, status: { $in: ACTIVE_ALLOCATION_STATUSES } }).sort({ createdAt: -1 }),
+    Vehicle.findById(vehicleId),
+  ]);
+  const nextVehicleStatus = activeTrip
+    ? activeTrip.status === 'in_transit' ? 'in_transit' : 'in_stockyard'
+    : latestPreparation?.status === 'completed'
+      ? 'completed'
+      : activePreparationVehicleStatuses.has(latestPreparation?.status)
+        ? 'under_preparation'
+        : ['maintenance', 'completed'].includes(vehicle?.status) ? vehicle.status : 'available';
 
   await Vehicle.findByIdAndUpdate(vehicleId, {
     status: nextVehicleStatus,
@@ -483,13 +489,87 @@ const requireDispatcher = async (dispatcherId) => {
 
   const dispatcher = await User.findById(dispatcherId);
 
-  if (!dispatcher) {
-    const error = new Error('Dispatcher not found.');
+  if (!dispatcher || dispatcher.role !== 'dispatcher' || !dispatcher.isActive) {
+    const error = new Error('Select an active dispatcher.');
     error.statusCode = 400;
     throw error;
   }
 
   return dispatcher;
+};
+
+const actorName = (req) => `${req.authUser.firstName ?? ''} ${req.authUser.lastName ?? ''}`.trim() || req.authUser.email;
+const preparationTransitions = {
+  pending: ['in_dispatch', 'rejected'],
+  rejected: ['pending', 'in_dispatch'],
+  in_dispatch: ['ready_for_release'],
+  ready_for_release: ['completed'],
+  completed: [],
+};
+
+// Keep the full existing mobile form payload compatible while trusting only server identity.
+export const authorizePreparationPayload = (req, existing = null) => {
+  const body = { ...(req.body ?? {}) };
+  const management = isManagement(req);
+  const dispatcher = req.authUser.role === 'dispatcher';
+  if (!existing) {
+    if (!management && ((body.approvalStatus && body.approvalStatus !== 'awaiting_approval') || (body.status && body.status !== 'pending'))) {
+      throw accessError('Only an administrator or supervisor can approve preparation requests.');
+    }
+    const approvalStatus = management ? body.approvalStatus ?? 'approved' : 'awaiting_approval';
+    const approved = approvalStatus === 'approved';
+    return {
+      ...body,
+      requestedByUserId: authenticatedId(req), requestedByRole: req.authUser.role, requestedByName: actorName(req),
+      approvalStatus,
+      status: approved ? 'in_dispatch' : approvalStatus === 'rejected' ? 'rejected' : 'pending',
+      progress: 0,
+      approvedByRole: approvalStatus === 'awaiting_approval' ? null : req.authUser.role,
+      approvedByName: approvalStatus === 'awaiting_approval' ? null : actorName(req),
+      approvedAt: approvalStatus === 'awaiting_approval' ? null : new Date(),
+      dispatcherId: approved ? body.dispatcherId ?? null : null,
+      dispatcherChecklist: (Array.isArray(body.dispatcherChecklist) ? body.dispatcherChecklist : []).map((step) => ({ ...step, completed: false, completedAt: null })),
+      completedAt: null, readyForReleaseAt: null,
+    };
+  }
+  if (!management && !dispatcher && (entityId(existing.requestedByUserId) !== authenticatedId(req) || !['pending', 'rejected'].includes(existing.status))) {
+    throw accessError('Only your own pending or rejected preparation requests can be edited.');
+  }
+  const approvalStatus = body.approvalStatus ?? existing.approvalStatus;
+  if (!management && approvalStatus !== existing.approvalStatus) throw accessError('Preparation approvals require an administrator or supervisor.');
+  let status = body.status ?? existing.status;
+  // Older completed records without release readiness need explicit staff review;
+  // allow an authorized correction without migrating or guessing their meaning.
+  const legacyReadinessCorrection = management && existing.status === 'completed' && !existing.readyForReleaseAt && status === 'ready_for_release';
+  if (status !== existing.status && !legacyReadinessCorrection && !preparationTransitions[existing.status]?.includes(status)) throw accessError('That preparation status transition is not allowed.', 409);
+  if (!management && !dispatcher && status !== existing.status) throw accessError('Preparation status changes require authorized operations staff.');
+  if (dispatcher && (!['in_dispatch', 'ready_for_release'].includes(status) || existing.approvalStatus !== 'approved')) throw accessError('Dispatchers can only prepare approved units and mark them ready for release.');
+  if (approvalStatus === 'rejected') status = 'rejected';
+  if (['in_dispatch', 'ready_for_release', 'completed'].includes(status) && approvalStatus !== 'approved') throw accessError('Approve the preparation request before dispatch.', 409);
+  const checklist = body.dispatcherChecklist ?? existing.dispatcherChecklist ?? [];
+  if (dispatcher) {
+    const taskIdentities = (items) => Array.isArray(items) ? items.map((step) => JSON.stringify([step.id, step.label])).sort() : [];
+    if (!Array.isArray(checklist) || JSON.stringify(taskIdentities(checklist)) !== JSON.stringify(taskIdentities(existing.dispatcherChecklist ?? []))) {
+      throw accessError('Dispatchers can complete assigned checklist items but cannot replace or remove them.');
+    }
+  }
+  if (status !== existing.status && ['ready_for_release', 'completed'].includes(status) && (!Array.isArray(checklist) || !checklist.length || checklist.some((step) => step.completed !== true))) {
+    throw accessError('Complete every dispatcher checklist item before release.', 409);
+  }
+  const approvalChanged = management && approvalStatus !== existing.approvalStatus;
+  return {
+    ...body, status, approvalStatus,
+    requestedByUserId: existing.requestedByUserId, requestedByRole: existing.requestedByRole, requestedByName: existing.requestedByName,
+    approvedByRole: approvalChanged ? req.authUser.role : existing.approvedByRole,
+    approvedByName: approvalChanged ? actorName(req) : existing.approvedByName,
+    approvedAt: approvalChanged ? new Date() : existing.approvedAt,
+    dispatcherId: dispatcher ? authenticatedId(req) : management ? body.dispatcherId ?? existing.dispatcherId : existing.dispatcherId,
+    progress: ['ready_for_release', 'completed'].includes(status) ? 100
+      : status === 'in_dispatch' && Array.isArray(checklist) && checklist.length
+        ? Math.round(checklist.filter((step) => step.completed === true).length / checklist.length * 100) : 0,
+    dispatcherChecklist: management || dispatcher ? checklist
+      : (Array.isArray(checklist) ? checklist : []).map((step) => ({ ...(step.toObject?.() ?? step), completed: false, completedAt: null })),
+  };
 };
 
 const requireOptionalRequester = async (requesterId) => {
@@ -603,17 +683,18 @@ const validatePayload = async (
   ]);
 
   if (requireAvailableVehicle) {
+    await ensureVehicleCanBeScheduled(payload.vehicleId);
     ensurePreparationVehicleAvailable(vehicle);
   }
 };
 
 export const listPreparations = asyncHandler(async (req, res) => {
-  const preparations = await Preparation.find(buildFilters(req.query))
+  const preparations = await Preparation.find(withAccessScope(req, buildFilters(req.query)))
     .populate(preparationPopulation)
     .sort({ createdAt: -1 });
 
   sendSuccess(res, {
-    data: preparations,
+    data: await Promise.all(preparations.map(buildPreparationEtaResponse)),
     message: 'Preparation records fetched successfully.',
   });
 });
@@ -622,13 +703,14 @@ export const getPreparationById = asyncHandler(async (req, res) => {
   const preparation = await requirePreparation(req.params.id);
 
   sendSuccess(res, {
-    data: preparation,
+    data: await buildPreparationEtaResponse(preparation),
     message: 'Preparation record fetched successfully.',
   });
 });
 
 export const createPreparation = asyncHandler(async (req, res) => {
-  const validatedPayload = await buildValidatedPayload(req.body ?? {});
+  const validatedPayload = await buildValidatedPayload(authorizePreparationPayload(req));
+  await assertWorkflowVehicleAccess(req, validatedPayload.vehicleId);
   const normalizedPayload = {
     ...validatedPayload,
     ...normalizePreparationStatusDates({
@@ -655,7 +737,7 @@ export const createPreparation = asyncHandler(async (req, res) => {
 
   sendSuccess(res, {
     status: 201,
-    data: savedPreparation,
+    data: await buildPreparationEtaResponse(savedPreparation),
     message: 'Preparation record created successfully.',
   });
 });
@@ -669,6 +751,9 @@ export const updatePreparation = asyncHandler(async (req, res) => {
     error.statusCode = 404;
     throw error;
   }
+
+  req.body = authorizePreparationPayload(req, existingPreparation);
+  if (req.body.vehicleId && entityId(req.body.vehicleId) !== entityId(existingPreparation.vehicleId)) await assertWorkflowVehicleAccess(req, req.body.vehicleId);
 
   const requestedStatus = req.body?.status ?? existingPreparation.status;
   const requestedReadyForReleaseAt =
@@ -764,7 +849,7 @@ export const updatePreparation = asyncHandler(async (req, res) => {
   });
 
   sendSuccess(res, {
-    data: savedPreparation,
+    data: await buildPreparationEtaResponse(savedPreparation),
     message: 'Preparation record updated successfully.',
   });
 });
@@ -804,6 +889,9 @@ export const getPreparationEtaModel = asyncHandler(async (req, res) => {
 
 export const deletePreparation = asyncHandler(async (req, res) => {
   const existingPreparation = await requirePreparation(req.params.id);
+  if (!isManagement(req) && (entityId(existingPreparation.requestedByUserId) !== authenticatedId(req) || !['pending', 'rejected'].includes(existingPreparation.status))) {
+    throw accessError('Only your own pending or rejected requests can be deleted.');
+  }
   const preparation = await Preparation.findByIdAndDelete(req.params.id);
 
   if (!preparation) {

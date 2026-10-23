@@ -1,6 +1,7 @@
 import { ACTIVE_ALLOCATION_STATUSES } from '../constants/enums.js';
 import { DRIVER_AI_THRESHOLDS } from '../config/driverAiConfig.js';
 import { DriverAllocation } from '../models/DriverAllocation.js';
+import { Preparation } from '../models/Preparation.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
 import { analyzeDriverBehavior } from '../services/driverAi/behaviorAnalysisService.js';
@@ -16,13 +17,19 @@ import {
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import { parseFiniteNumber, parseCoordinates } from '../utils/inputValidation.js';
+import { withAccessScope } from '../middleware/operationAccess.js';
 import { scanDriverSafetyAlerts } from '../services/driverSafetyMonitorService.js';
+import { createNotificationsForRoles, createNotificationsForUsers } from '../services/notificationsService.js';
+import { requireActionReason } from '../middleware/operationAudit.js';
+import { recordSeriousDeliveryDelay } from '../services/deliveryDelayService.js';
 
 const dispatchNotificationTask = (task, label) => {
   void task.catch((error) => {
     console.error(`Notification dispatch failed (${label}):`, error);
   });
 };
+let lastListSafetyScanAt = 0;
 
 const allocationPopulation = [
   {
@@ -119,19 +126,6 @@ const assertRouteStops = ({ pickupLocation, destinationLocation }) => {
     error.statusCode = 400;
     throw error;
   }
-};
-
-const parseFiniteNumber = (value, label) => {
-  const parsedValue =
-    typeof value === 'number' ? value : Number(String(value ?? '').trim());
-
-  if (!Number.isFinite(parsedValue)) {
-    const error = new Error(`${label} is required.`);
-    error.statusCode = 400;
-    throw error;
-  }
-
-  return parsedValue;
 };
 
 const parseOptionalDate = (value, label) => {
@@ -288,9 +282,25 @@ const reconcileVehicleStatus = async (vehicleId) => {
     status: { $in: ACTIVE_ALLOCATION_STATUSES },
   }).sort({ createdAt: -1 });
 
-  const nextStatus = latestActiveAllocation
-    ? resolveVehicleStatus(latestActiveAllocation.status)
-    : 'available';
+  let nextStatus;
+  if (latestActiveAllocation) {
+    nextStatus = resolveVehicleStatus(latestActiveAllocation.status);
+  } else {
+    const [vehicle, latestPreparation] = await Promise.all([
+      Vehicle.findById(vehicleId),
+      Preparation.findOne({ vehicleId, status: { $ne: 'rejected' } })
+        .sort({ updatedAt: -1, createdAt: -1 }),
+    ]);
+    if (vehicle?.status === 'maintenance') {
+      nextStatus = 'maintenance';
+    } else if (latestPreparation?.status === 'completed') {
+      nextStatus = 'completed';
+    } else if (['pending', 'in_dispatch', 'ready_for_release'].includes(latestPreparation?.status)) {
+      nextStatus = 'under_preparation';
+    } else {
+      nextStatus = vehicle?.status === 'completed' ? 'completed' : 'available';
+    }
+  }
 
   await Vehicle.findByIdAndUpdate(vehicleId, {
     status: nextStatus,
@@ -349,6 +359,8 @@ const prepareAllocationPayload = async (payload, currentAllocationId = null) => 
   } = payload;
 
   assertRouteStops({ pickupLocation, destinationLocation });
+  const pickupCoordinates = parseCoordinates(pickupLocation, 'Pickup location');
+  const destinationCoordinates = parseCoordinates(destinationLocation, 'Destination location');
 
   const [vehicle, driver] = await Promise.all([
     requireVehicleDocument(vehicleId),
@@ -371,6 +383,8 @@ const prepareAllocationPayload = async (payload, currentAllocationId = null) => 
 
   return {
     ...payload,
+    pickupLocation: { ...pickupLocation, ...pickupCoordinates },
+    destinationLocation: { ...destinationLocation, ...destinationCoordinates },
     managerId: managerId ?? null,
     vehicleId: vehicle.id,
     driverId: driver.id,
@@ -403,14 +417,17 @@ const normalizeActionText = (value, fallback = '') =>
   String(value ?? fallback).trim().slice(0, 500);
 
 export const listDriverAllocations = asyncHandler(async (req, res) => {
-  await scanDriverSafetyAlerts().catch((error) => {
+  if (Date.now() - lastListSafetyScanAt >= 60_000) {
+    lastListSafetyScanAt = Date.now();
+    void scanDriverSafetyAlerts().catch((error) => {
     console.warn(
       '[driver-safety-monitor] Unable to scan before listing allocations:',
       error instanceof Error ? error.message : error
     );
   });
+  }
 
-  const allocations = await DriverAllocation.find(buildAllocationFilters(req.query))
+  const allocations = await DriverAllocation.find(withAccessScope(req, buildAllocationFilters(req.query)))
     .populate(allocationPopulation)
     .sort({ createdAt: -1 });
 
@@ -486,6 +503,7 @@ export const updateDriverAllocation = asyncHandler(async (req, res) => {
   ]);
 
   const savedAllocation = await requireAllocation(req.params.id);
+  await recordSeriousDeliveryDelay(savedAllocation);
   dispatchNotificationTask(
     notifyDriverAllocationUpdated({
       previousAllocation,
@@ -529,7 +547,7 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
     isDriverInTransitHeartbeatDue(existingAllocation, currentLocation.timestamp);
   const updatePayload = analysisResult.acceptedPoint
     ? {
-        currentLocation: { ...analysisResult.currentLocation, updatedAt: new Date() },
+        currentLocation: { ...analysisResult.currentLocation, updatedAt: currentLocation.timestamp },
         routeProgress: analysisResult.routeProgress,
         aiState: analysisResult.aiState,
         behaviorEvents: analysisResult.behaviorEvents,
@@ -551,9 +569,9 @@ export const updateDriverAllocationLiveLocation = asyncHandler(async (req, res) 
     };
   }
 
-  await DriverAllocation.findByIdAndUpdate(
-    req.params.id,
-    updatePayload,
+  await DriverAllocation.findOneAndUpdate(
+    { _id: req.params.id, updatedAt: existingAllocation.updatedAt, status: IN_TRANSIT_ALLOCATION_STATUS },
+    { $set: updatePayload },
     {
       new: true,
       runValidators: true,
@@ -615,6 +633,7 @@ export const requestDriverAllocationCompletion = asyncHandler(async (req, res) =
 
 export const requestDriverAllocationStop = asyncHandler(async (req, res) => {
   const existingAllocation = await requireInTransitAllocationForDriverAction(req.params.id);
+  const reason = requireActionReason(req.body?.reason);
 
   if (existingAllocation.stopRequest?.status === 'pending') {
     const error = new Error('A stop trip request is already pending review.');
@@ -627,10 +646,7 @@ export const requestDriverAllocationStop = asyncHandler(async (req, res) => {
     {
       stopRequest: {
         status: 'pending',
-        reason: normalizeActionText(
-          req.body?.reason,
-          'Driver requested admin approval to stop the trip.'
-        ),
+        reason,
         requestedAt: new Date(),
         reviewedAt: null,
         reviewedBy: null,
@@ -654,6 +670,50 @@ export const requestDriverAllocationStop = asyncHandler(async (req, res) => {
     data: savedAllocation,
     message: 'Stop trip request sent successfully.',
   });
+});
+
+export const acceptDriverAllocation = asyncHandler(async (req, res) => {
+  const previousAllocation = await requireAllocation(req.params.id);
+  const allocation = await DriverAllocation.findOneAndUpdate({ _id: req.params.id,
+    driverId: req.authUser.id, status: 'pending', 'rejectionRequest.status': { $ne: 'pending' },
+  }, { $set: { status: 'assigned' } }, { new: true, runValidators: true }).populate(allocationPopulation);
+  if (!allocation) return res.status(409).json({ success: false, message: 'This booking is no longer awaiting your acceptance. Refresh your assignments.' });
+  dispatchNotificationTask(notifyDriverAllocationUpdated({ previousAllocation, nextAllocation: allocation }), 'driver booking acceptance');
+  sendSuccess(res, { data: allocation, message: 'Booking accepted.' });
+});
+
+export const requestDriverAllocationRejection = asyncHandler(async (req, res) => {
+  const reason = requireActionReason(req.body?.reason);
+  const allocation = await DriverAllocation.findOneAndUpdate({ _id: req.params.id, driverId: req.authUser.id,
+    status: { $in: ['pending', 'assigned'] }, 'rejectionRequest.status': { $ne: 'pending' },
+  }, { $set: { rejectionRequest: { status: 'pending', reason, requestedAt: new Date(), reviewedAt: null, reviewedBy: null, reviewNotes: '' } } },
+  { new: true, runValidators: true }).populate(allocationPopulation);
+  if (!allocation) return res.status(409).json({ success: false, message: 'This booking cannot be requested for rejection, or a request is already pending.' });
+  dispatchNotificationTask(createNotificationsForRoles({ roles: ['admin', 'supervisor'], type: 'alert',
+    title: 'Driver booking rejection needs approval', message: `${allocation.driverId.firstName} requested rejection: ${reason}`,
+    data: { entityType: 'driver_allocation', entityId: allocation.id, rejectionRequestStatus: 'pending' },
+  }), 'driver rejection request');
+  sendSuccess(res, { data: allocation, message: 'Rejection requested; pending administrator or supervisor approval.' });
+});
+
+export const reviewDriverAllocationRejection = asyncHandler(async (req, res) => {
+  const action = req.body?.action;
+  if (!['approve', 'reject'].includes(action)) return res.status(400).json({ success: false, message: 'Choose approve or reject.' });
+  const reviewNotes = requireActionReason(req.body?.reviewNotes);
+  const approved = action === 'approve';
+  const update = { 'rejectionRequest.status': approved ? 'approved' : 'rejected',
+    'rejectionRequest.reviewedAt': new Date(), 'rejectionRequest.reviewedBy': req.authUser.id, 'rejectionRequest.reviewNotes': reviewNotes };
+  if (approved) { update.status = 'cancelled'; update.endTime = new Date(); }
+  const allocation = await DriverAllocation.findOneAndUpdate({ _id: req.params.id,
+    status: { $in: ['pending', 'assigned'] }, 'rejectionRequest.status': 'pending',
+  }, { $set: update }, { new: true, runValidators: true }).populate(allocationPopulation);
+  if (!allocation) return res.status(409).json({ success: false, message: 'No pending rejection is available. Refresh this booking.' });
+  if (approved) await reconcileVehicleStatus(allocation.vehicleId.id);
+  dispatchNotificationTask(createNotificationsForUsers({ userIds: [allocation.driverId.id], type: 'driver',
+    title: approved ? 'Booking rejection approved' : 'Booking rejection denied', message: reviewNotes,
+    data: { entityType: 'driver_allocation', entityId: allocation.id, rejectionRequestStatus: allocation.rejectionRequest.status },
+  }), 'driver rejection reviewed');
+  sendSuccess(res, { data: allocation, message: approved ? 'Rejection approved; booking cancelled.' : 'Rejection denied; booking remains assigned.' });
 });
 
 export const reviewDriverAllocationStopRequest = asyncHandler(async (req, res) => {
@@ -688,7 +748,7 @@ export const reviewDriverAllocationStopRequest = asyncHandler(async (req, res) =
         {}),
       status: approved ? 'approved' : 'rejected',
       reviewedAt: new Date(),
-      reviewedBy: req.user?.id ?? req.body?.reviewedBy ?? null,
+      reviewedBy: req.authUser.id,
       reviewNotes: normalizeActionText(req.body?.reviewNotes),
     },
   };

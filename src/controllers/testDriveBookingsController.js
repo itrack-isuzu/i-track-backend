@@ -1,6 +1,7 @@
 import { TestDriveBooking } from '../models/TestDriveBooking.js';
 import { User } from '../models/User.js';
 import { Vehicle } from '../models/Vehicle.js';
+import { UnitAgentAllocation } from '../models/UnitAgentAllocation.js';
 import {
   notifyTestDriveCreated,
   notifyTestDriveDeleted,
@@ -8,9 +9,11 @@ import {
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import { accessError, authenticatedId, entityId, isManagement, withAccessScope, ensureVehicleCanBeScheduled, assertWorkflowVehicleAccess } from '../middleware/operationAccess.js';
 import {
   ensureUniquePhoneNumber,
   ensureValidPhoneNumber,
+  normalizePhoneNumber,
 } from '../utils/phoneNumbers.js';
 
 const dispatchNotificationTask = (task, label) => {
@@ -80,6 +83,44 @@ const requireBooking = async (id) => {
   return booking;
 };
 
+export const assertBookingOwnership = async (req, existing) => {
+  if (isManagement(req) || entityId(existing.requestedByUserId) === authenticatedId(req)) return;
+  if (req.authUser.role === 'manager') {
+    const [teamRequester, teamVehicle] = await Promise.all([
+      User.exists({ _id: entityId(existing.requestedByUserId), role: 'sales_agent', managerId: authenticatedId(req) }),
+      UnitAgentAllocation.exists({ vehicleId: entityId(existing.vehicleId), managerId: authenticatedId(req) }),
+    ]);
+    if (teamRequester || teamVehicle) return;
+  }
+  throw accessError('Only the request owner or its team manager can change this test drive.');
+};
+
+export const authorizeBookingPayload = async (req, existing = null) => {
+  const payload = { ...(req.body ?? {}) };
+  const management = isManagement(req);
+  const nextStatus = payload.status ?? existing?.status ?? 'pending';
+  if (existing) await assertBookingOwnership(req, existing);
+  if (!management) {
+    const approvedOutcome = existing?.status === 'approved' && ['completed', 'cancelled', 'no_show'].includes(nextStatus);
+    if ((!existing && nextStatus !== 'pending') || (existing && nextStatus !== existing.status && !approvedOutcome)) throw accessError('Test drive approval and rejection require an administrator or supervisor.');
+    if (existing && !['pending', 'available'].includes(existing.status)) {
+      const protectedFields = ['vehicleId', 'customerName', 'customerPhone', 'scheduledDate', 'scheduledTime'];
+      const changed = protectedFields.some((field) => {
+        if (payload[field] === undefined) return false;
+        if (field === 'vehicleId') return entityId(payload[field]) !== entityId(existing[field]);
+        if (field === 'customerPhone') return normalizePhoneNumber(payload[field]) !== normalizePhoneNumber(existing[field]);
+        return String(payload[field]).trim() !== String(existing[field] ?? '').trim();
+      });
+      if (changed) throw accessError('Vehicle, customer, and schedule changes to an approved or closed booking require an administrator or supervisor.');
+    }
+  }
+  if (existing && nextStatus !== existing.status) {
+    const transitions = { available: ['pending', 'approved', 'cancelled'], pending: ['approved', 'cancelled'], approved: ['completed', 'cancelled', 'no_show'], completed: [], cancelled: [], no_show: [] };
+    if (!transitions[existing.status]?.includes(nextStatus)) throw accessError('That test drive status transition is not allowed.', 409);
+  }
+  return { ...payload, status: nextStatus, requestedByUserId: existing ? existing.requestedByUserId : authenticatedId(req) };
+};
+
 const buildValidatedPayload = async ({
   id,
   vehicleId,
@@ -120,7 +161,7 @@ const buildValidatedPayload = async ({
 };
 
 export const listTestDriveBookings = asyncHandler(async (req, res) => {
-  const bookings = await TestDriveBooking.find(buildFilters(req.query))
+  const bookings = await TestDriveBooking.find(withAccessScope(req, buildFilters(req.query)))
     .populate(bookingPopulation)
     .sort({ scheduledDate: 1, scheduledTime: 1, createdAt: -1 });
 
@@ -140,7 +181,9 @@ export const getTestDriveBookingById = asyncHandler(async (req, res) => {
 });
 
 export const createTestDriveBooking = asyncHandler(async (req, res) => {
-  const validatedPayload = await buildValidatedPayload(req.body ?? {});
+  const validatedPayload = await buildValidatedPayload(await authorizeBookingPayload(req));
+  await assertWorkflowVehicleAccess(req, validatedPayload.vehicleId);
+  await ensureVehicleCanBeScheduled(validatedPayload.vehicleId);
   await Promise.all([
     requireVehicle(validatedPayload.vehicleId),
     requireOptionalRequester(validatedPayload.requestedByUserId),
@@ -169,6 +212,9 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
     throw error;
   }
 
+  req.body = await authorizeBookingPayload(req, existingBooking);
+  if (req.body.vehicleId && entityId(req.body.vehicleId) !== entityId(existingBooking.vehicleId)) await assertWorkflowVehicleAccess(req, req.body.vehicleId);
+
   const validatedPayload = await buildValidatedPayload({
     id: existingBooking.id,
     vehicleId: req.body?.vehicleId ?? existingBooking.vehicleId,
@@ -183,6 +229,8 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
     notes: req.body?.notes ?? existingBooking.notes,
     status: req.body?.status ?? existingBooking.status,
   });
+
+  if (entityId(validatedPayload.vehicleId) !== entityId(existingBooking.vehicleId)) await ensureVehicleCanBeScheduled(validatedPayload.vehicleId);
 
   await Promise.all([
     requireVehicle(validatedPayload.vehicleId),
@@ -211,6 +259,7 @@ export const updateTestDriveBooking = asyncHandler(async (req, res) => {
 
 export const deleteTestDriveBooking = asyncHandler(async (req, res) => {
   const existingBooking = await requireBooking(req.params.id);
+  await assertBookingOwnership(req, existingBooking);
   const booking = await TestDriveBooking.findByIdAndDelete(req.params.id);
 
   if (!booking) {

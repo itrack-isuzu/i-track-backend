@@ -1,5 +1,7 @@
 import { DRIVER_AI_THRESHOLDS } from '../config/driverAiConfig.js';
 import { DriverAllocation } from '../models/DriverAllocation.js';
+import { Notification } from '../models/Notification.js';
+import { recordSeriousDeliveryDelay } from './deliveryDelayService.js';
 import {
   notifyDriverEtaOverdue,
   notifyDriverGpsConnectionLost,
@@ -48,12 +50,17 @@ const isCooldownElapsed = (lastNotifiedAt, now) => {
   );
 };
 
+const hasValidGpsCoordinates = (location) =>
+  typeof location?.latitude === 'number' && Number.isFinite(location.latitude) &&
+    Math.abs(location.latitude) <= 90 && typeof location?.longitude === 'number' &&
+    Number.isFinite(location.longitude) && Math.abs(location.longitude) <= 180;
+
 const getGpsStaleSeconds = (allocation, now) => {
   const latestGpsTime = getTime(
     allocation.currentLocation?.updatedAt ?? allocation.currentLocation?.timestamp
   );
 
-  if (latestGpsTime) {
+  if (hasValidGpsCoordinates(allocation.currentLocation) && latestGpsTime !== null && latestGpsTime <= now.getTime()) {
     const staleSeconds = Math.floor((now.getTime() - latestGpsTime) / 1000);
 
     return staleSeconds >= DRIVER_AI_THRESHOLDS.safetyMonitor.gpsLostAfterSeconds
@@ -63,8 +70,10 @@ const getGpsStaleSeconds = (allocation, now) => {
 
   const startTime = getTime(allocation.startTime);
 
-  if (!startTime) {
-    return null;
+  if (startTime === null || startTime > now.getTime()) {
+    // An active delivery with neither a valid fix nor a usable start time is
+    // untrackable, but its outage duration is unknown.
+    return 0;
   }
 
   const missingSeconds = Math.floor((now.getTime() - startTime) / 1000);
@@ -141,6 +150,7 @@ export const scanDriverSafetyAlerts = async (detectedAt = new Date()) => {
       etaOverdueAlerts: 0,
       shipmentStartOverdueAlerts: 0,
     };
+    const trackableIds = [];
 
     for (const allocation of allocations) {
       const shipmentStartOverdueMinutes = getShipmentStartOverdueMinutes(
@@ -172,8 +182,12 @@ export const scanDriverSafetyAlerts = async (detectedAt = new Date()) => {
       }
 
       const gpsStaleSeconds = getGpsStaleSeconds(allocation, detectedAt);
+      const gpsTime = getTime(allocation.currentLocation?.updatedAt ?? allocation.currentLocation?.timestamp);
+      const hasRecovered = gpsStaleSeconds === null && hasValidGpsCoordinates(allocation.currentLocation) &&
+        gpsTime !== null && gpsTime <= detectedAt.getTime();
+      if (hasRecovered) trackableIds.push(allocation.id);
 
-      if (gpsStaleSeconds === null && allocation.aiState?.lastGpsLostNotifiedAt) {
+      if (hasRecovered && allocation.aiState?.lastGpsLostNotifiedAt) {
         await DriverAllocation.findByIdAndUpdate(allocation.id, {
           $set: { 'aiState.lastGpsLostNotifiedAt': null },
         });
@@ -189,6 +203,7 @@ export const scanDriverSafetyAlerts = async (detectedAt = new Date()) => {
       }
 
       const etaOverdueMinutes = getEtaOverdueMinutes(allocation, detectedAt);
+      await recordSeriousDeliveryDelay(allocation, detectedAt);
 
       if (
         etaOverdueMinutes !== null &&
@@ -207,6 +222,15 @@ export const scanDriverSafetyAlerts = async (detectedAt = new Date()) => {
       }
     }
 
+    if (trackableIds.length) {
+      // Resolve the warning without removing its original notification history.
+      await Notification.updateMany({
+        'data.entityType': 'driver_allocation',
+        'data.entityId': { $in: trackableIds },
+        'data.safetyAlertType': 'gps_connection_lost',
+        'data.resolvedAt': { $exists: false },
+      }, { $set: { 'data.resolvedAt': detectedAt } });
+    }
     return summary;
   } finally {
     isScanRunning = false;

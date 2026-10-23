@@ -1,16 +1,19 @@
 import { Vehicle } from '../models/Vehicle.js';
+import { VEHICLE_STATUSES } from '../constants/enums.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import { buildLiteralSearchPattern, validateEnumInput, validateVehiclePayload } from '../utils/inputValidation.js';
+import { withAccessScope } from '../middleware/operationAccess.js';
 
 const buildVehicleFilters = (query) => {
   const filters = {};
 
   if (query.status) {
-    filters.status = query.status;
+    filters.status = validateEnumInput(query.status, VEHICLE_STATUSES, 'Vehicle status');
   }
 
-  if (query.search) {
-    const pattern = new RegExp(query.search, 'i');
+  const pattern = buildLiteralSearchPattern(query.search);
+  if (pattern) {
     filters.$or = [
       { unitName: pattern },
       { variation: pattern },
@@ -35,7 +38,7 @@ const requireVehicle = async (id) => {
 };
 
 export const listVehicles = asyncHandler(async (req, res) => {
-  const vehicles = await Vehicle.find(buildVehicleFilters(req.query)).sort({
+  const vehicles = await Vehicle.find(withAccessScope(req, buildVehicleFilters(req.query))).sort({
     createdAt: -1,
   });
 
@@ -55,7 +58,8 @@ export const getVehicleById = asyncHandler(async (req, res) => {
 });
 
 export const createVehicle = asyncHandler(async (req, res) => {
-  const vehicle = await Vehicle.create(req.body);
+  const payload = validateVehiclePayload(req.body, { statuses: VEHICLE_STATUSES });
+  const vehicle = await Vehicle.create(payload);
   const savedVehicle = await requireVehicle(vehicle.id);
 
   sendSuccess(res, {
@@ -66,7 +70,13 @@ export const createVehicle = asyncHandler(async (req, res) => {
 });
 
 export const updateVehicle = asyncHandler(async (req, res) => {
-  const vehicle = await Vehicle.findByIdAndUpdate(req.params.id, req.body, {
+  const existingVehicle = await requireVehicle(req.params.id);
+  const payload = validateVehiclePayload(req.body, {
+    partial: true,
+    statuses: VEHICLE_STATUSES,
+    existingConductionNumber: existingVehicle.conductionNumber,
+  });
+  const vehicle = await Vehicle.findByIdAndUpdate(req.params.id, payload, {
     new: true,
     runValidators: true,
   });

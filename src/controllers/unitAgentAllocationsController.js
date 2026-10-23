@@ -8,6 +8,7 @@ import {
 } from '../services/notificationDispatchers.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
+import { withAccessScope, ensureVehicleCanBeScheduled } from '../middleware/operationAccess.js';
 
 const dispatchNotificationTask = (task, label) => {
   void task.catch((error) => {
@@ -92,7 +93,8 @@ const requireAllocation = async (id) => {
   return allocation;
 };
 
-const validatePayload = async ({ managerId, salesAgentId, vehicleId, currentId }) => {
+const validatePayload = async ({ managerId, salesAgentId, vehicleId, currentId, currentVehicleId }) => {
+  if (!currentId || String(currentVehicleId) !== String(vehicleId)) await ensureVehicleCanBeScheduled(vehicleId);
   const [manager, salesAgent, vehicle, duplicate] = await Promise.all([
     requireUserRole(managerId, 'Manager', 'manager'),
     requireUserRole(salesAgentId, 'Sales agent', 'sales_agent'),
@@ -122,7 +124,7 @@ const validatePayload = async ({ managerId, salesAgentId, vehicleId, currentId }
 };
 
 export const listUnitAgentAllocations = asyncHandler(async (req, res) => {
-  const allocations = await UnitAgentAllocation.find(buildFilters(req.query))
+  const allocations = await UnitAgentAllocation.find(withAccessScope(req, buildFilters(req.query)))
     .populate(allocationPopulation)
     .sort({ createdAt: -1 });
 
@@ -144,8 +146,8 @@ export const getUnitAgentAllocationById = asyncHandler(async (req, res) => {
 export const createUnitAgentAllocation = asyncHandler(async (req, res) => {
   const payload = await validatePayload(req.body ?? {});
   const allocation = await UnitAgentAllocation.create({
-    ...req.body,
     ...payload,
+    status: req.body?.status ?? 'assigned',
   });
 
   const savedAllocation = await requireAllocation(allocation.id);
@@ -166,13 +168,14 @@ export const updateUnitAgentAllocation = asyncHandler(async (req, res) => {
   const payload = await validatePayload({
     ...(req.body ?? {}),
     currentId: req.params.id,
+    currentVehicleId: existingAllocation.vehicleId.id ?? existingAllocation.vehicleId,
   });
 
   await UnitAgentAllocation.findByIdAndUpdate(
     req.params.id,
     {
-      ...req.body,
       ...payload,
+      status: req.body?.status ?? existingAllocation.status,
     },
     {
       new: true,

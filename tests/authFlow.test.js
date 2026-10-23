@@ -29,6 +29,7 @@ for (const role of ['admin', 'supervisor', 'manager', 'sales_agent', 'dispatcher
     assert.equal(res.payload.data.user.role, role);
     assert.equal(res.payload.data.user.mustChangePassword, false);
     assert.equal(f.getSession().token, res.payload.data.token);
+    assert.ok(f.user.lastLoginAt instanceof Date);
     // Reads across requests return the same stored session, rather than an untracked UUID.
     assert.equal(f.getSession().userId, f.user.id);
     await f.controller.logout({ body: {}, authUser: f.user, authToken: f.getSession().token }, {});

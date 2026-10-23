@@ -13,10 +13,13 @@ import { Vehicle } from './models/Vehicle.js';
 import { initializePreparationEtaModel } from './services/preparationEtaService.js';
 import { ensureSeedData } from './services/seedService.js';
 import { startDriverSafetyMonitor } from './services/driverSafetyMonitorService.js';
+import { startPushReceiptMonitor } from './services/pushReceiptsService.js';
+import { AuditEvent } from './models/AuditEvent.js';
 
 const bootstrapServer = async () => {
   const models = [
     User,
+    AuditEvent,
     AuthSession,
     Vehicle,
     Notification,
@@ -39,6 +42,7 @@ const bootstrapServer = async () => {
   app.listen(env.port, () => {
     console.log(`I-TRACK backend listening on port ${env.port}.`);
     startDriverSafetyMonitor();
+    startPushReceiptMonitor();
 
     if (ensuredCollections.length > 0) {
       console.log(

@@ -8,10 +8,14 @@ const locationSchema = new mongoose.Schema(
     latitude: {
       type: Number,
       required: true,
+      min: -90,
+      max: 90,
     },
     longitude: {
       type: Number,
       required: true,
+      min: -180,
+      max: 180,
     },
   },
   {
@@ -38,6 +42,7 @@ const vehicleSchema = new mongoose.Schema(
       trim: true,
       uppercase: true,
       index: true,
+      match: [/^[A-Z0-9]{6,7}$/, 'Conduction number must contain 6 to 7 letters or digits.'],
     },
     bodyColor: {
       type: String,
@@ -67,18 +72,6 @@ const vehicleSchema = new mongoose.Schema(
   },
   baseSchemaOptions
 );
-
-vehicleSchema.pre('validate', function normalizeVehicle(next) {
-  if (this.conductionNumber) {
-    this.conductionNumber = this.conductionNumber
-      .toUpperCase()
-      .replace(/\s+/g, '')
-      .replace(/[^A-Z0-9]/g, '')
-      .slice(0, 7);
-  }
-
-  next();
-});
 
 export const Vehicle =
   mongoose.models.Vehicle || mongoose.model('Vehicle', vehicleSchema);

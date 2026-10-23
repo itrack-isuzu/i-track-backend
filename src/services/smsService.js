@@ -124,13 +124,25 @@ const maskApiKey = (value) => {
   return `${normalizedValue.slice(0, 8)}********************`;
 };
 
+// These explicit failure flags use the same success fields already handled by
+// the integration. Do not infer delivery or invent an acceptance receipt shape.
+const hasExplicitSmsFailure = (responseBody) => {
+  if (!responseBody || typeof responseBody !== 'object') return false;
+  return responseBody.success === false ||
+    responseBody.IsSuccessful === false ||
+    responseBody.isSuccessful === false;
+};
+
+const hasFailureText = (value) =>
+  /\b(error|invalid|failed|failure|rejected|denied|unsuccessful)\b|\bnot\s+(?:\w+\s+){0,2}(success|queued|accepted|sent)\b/i.test(String(value ?? ''));
+
 const isSuccessfulFortmedResponse = (responseBody) => {
-  if (!responseBody) {
+  if (!responseBody || hasExplicitSmsFailure(responseBody)) {
     return false;
   }
 
   if (typeof responseBody === 'string') {
-    return /\b(success|queued|accepted|sent)\b/i.test(responseBody);
+    return !hasFailureText(responseBody) && /\b(success|queued|accepted|sent)\b/i.test(responseBody);
   }
 
   return Boolean(
@@ -345,6 +357,7 @@ const sendPreparationCompletionSmsViaFortmed = async ({
 };
 
 const isSuccessfulFmcsmsResponse = (rawResponseBody, responseBody) => {
+  if (hasExplicitSmsFailure(responseBody)) return false;
   const normalizedBody = String(rawResponseBody ?? '').trim();
   const normalizedJsonMessage = String(
     responseBody?.message ?? responseBody?.status ?? responseBody?.detail ?? ''
@@ -353,6 +366,7 @@ const isSuccessfulFmcsmsResponse = (rawResponseBody, responseBody) => {
   const successPatterns = [/^1701$/, /^111[123](:|$)/i, /\b(success|queued)\b/i];
 
   return [normalizedBody, normalizedJsonMessage].some((candidate) =>
+    !hasFailureText(candidate) &&
     successPatterns.some((pattern) => pattern.test(candidate))
   );
 };
@@ -411,11 +425,7 @@ const sendPreparationCompletionSmsViaFmcsms = async ({
     );
   }
 
-  if (/^\d+$/.test(rawResponseBody) && rawResponseBody !== '1701') {
-    throw new Error(`FMCSMS returned code ${rawResponseBody}.`);
-  }
-
-  if (rawResponseBody && /(error|invalid|failed)/i.test(rawResponseBody)) {
+  if (rawResponseBody && hasFailureText(rawResponseBody)) {
     throw new Error(rawResponseBody);
   }
 
@@ -482,7 +492,7 @@ const sendPreparationCompletionSmsViaTwilio = async ({
 
   const responseBody = await response.json().catch(() => null);
 
-  if (!response.ok) {
+  if (!response.ok || hasExplicitSmsFailure(responseBody)) {
     throw new Error(
       String(
         responseBody?.message ??
@@ -544,7 +554,7 @@ const sendPreparationCompletionSmsViaUnisms = async ({
   const rawResponseBody = await response.text();
   const responseBody = parseJsonSafely(rawResponseBody) ?? rawResponseBody;
 
-  if (!response.ok) {
+  if (!response.ok || hasExplicitSmsFailure(responseBody)) {
     throw new Error(
       String(
         (typeof responseBody === 'object' && responseBody !== null

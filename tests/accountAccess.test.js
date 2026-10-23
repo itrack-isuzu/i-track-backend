@@ -35,7 +35,7 @@ test('API blocks restricted accounts, allows password change, and rejects invali
 
 test('GPS outage alerts once, rearms on recovery, and ignores completed trips', async () => {
   const now = new Date('2026-10-06T12:00:00Z');
-  const allocation = { id: 'trip', status: 'in_transit', currentLocation: { updatedAt: new Date(now - 301000) }, aiState: {} };
+  const allocation = { id: 'trip', status: 'in_transit', currentLocation: { latitude: 14.5, longitude: 121, updatedAt: new Date(now - 301000) }, aiState: {} };
   let alerts = 0;
   const { scanDriverSafetyAlerts } = await loadWithMocks('../src/services/driverSafetyMonitorService.js', {
     DRIVER_AI_THRESHOLDS: { safetyMonitor: { gpsLostAfterSeconds: 300, gpsMissingAfterTripStartSeconds: 120, alertCooldownSeconds: 900 } },
@@ -45,6 +45,8 @@ test('GPS outage alerts once, rearms on recovery, and ignores completed trips', 
     },
     notifyDriverGpsConnectionLost: async () => { alerts++; },
     notifyDriverEtaOverdue: async () => {}, notifyDriverShipmentStartOverdue: async () => {},
+    recordSeriousDeliveryDelay: async () => {},
+    Notification: { updateMany: async () => {} },
   });
   await scanDriverSafetyAlerts(now);
   await scanDriverSafetyAlerts(new Date(+now + 1000000));
