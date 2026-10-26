@@ -89,7 +89,11 @@ test('live-location controller rejects blank GPS before analysis and keeps exist
   const { updateDriverAllocationLiveLocation } = await loadWithMocks('../src/controllers/driverAllocationsController.js', {
     DriverAllocation: {
       findById: () => ({ status: 'in_transit', populate: async () => saved }),
-      findByIdAndUpdate: async () => {},
+      findOneAndUpdate: async (filter, update) => {
+        assert.equal(filter.status, 'in_transit');
+        assert.deepEqual(update.$set.aiState, {});
+        assert.equal(Object.hasOwn(update.$set, 'currentLocation'), false);
+      },
     },
     DRIVER_AI_THRESHOLDS: { gps: { maxClientTimestampSkewSeconds: 60, maxClientLocationAgeSeconds: 300, maxAcceptedAccuracyForStorageMeters: 1000 } },
     parseFiniteNumber, parseCoordinates,

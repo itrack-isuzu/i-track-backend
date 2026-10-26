@@ -196,6 +196,21 @@ test('own driver accept/start/complete works; skipping, cancellation, reassignme
   }
 });
 
+test('drivers cannot bypass pending cancellation/rejection and only admin/supervisor can review either request route', async () => {
+  const access = await accessFixture({ DriverAllocation: { findOne: async () => ({ id: 'trip', driverId: 'self', status: 'in_transit' }) } });
+  for (const field of ['stopRequest', 'rejectionRequest']) {
+    const req = { authUser: user('driver'), accessRecord: { driverId: 'self', status: 'in_transit', [field]: { status: 'pending' } }, body: { status: 'completed' } };
+    assert.equal((await runGuard(access.guardDriverAllocationUpdate, req)).statusCode, 409);
+  }
+  const route = await routeFixture('driverAllocationsRoutes.js', access);
+  for (const path of ['/:id/stop-request', '/:id/rejection-request']) {
+    for (const role of ['admin', 'supervisor', 'driver', 'manager', 'sales_agent', 'dispatcher']) {
+      const result = await route('patch', path, { authUser: user(role), params: { id: 'trip' }, body: { action: 'approve', reviewNotes: 'Fixture review reason' } });
+      assert.equal(result.reached, ['admin', 'supervisor'].includes(role), `${role}: ${path}`);
+    }
+  }
+});
+
 test('referenced stock cannot be deleted; unreferenced stock is deletable', async () => {
   for (const model of ['DriverAllocation', 'Preparation', 'TestDriveBooking', 'UnitAgentAllocation']) {
     const access = await accessFixture({ [model]: { exists: async ({ vehicleId }) => vehicleId === 'v1' ? { _id: 'history' } : null } });

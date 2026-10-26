@@ -196,6 +196,9 @@ export const guardDriverAllocationUpdate = (req, res, next) => {
   if (driver && record.rejectionRequest?.status === 'pending' && nextStatus !== record.status) {
     return next(accessError('Wait for the administrator or supervisor to review your rejection request.', 409));
   }
+  if (driver && record.stopRequest?.status === 'pending' && nextStatus !== record.status) {
+    return next(accessError('Wait for the administrator or supervisor to review your cancellation request.', 409));
+  }
   if (nextStatus !== record.status && !driverTransitions[record.status]?.includes(nextStatus)) {
     return next(accessError(`Shipment status cannot change from ${record.status} to ${nextStatus}.`, 409));
   }

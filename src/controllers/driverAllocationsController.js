@@ -492,10 +492,19 @@ export const updateDriverAllocation = asyncHandler(async (req, res) => {
     existingAllocation.id
   );
 
-  await DriverAllocation.findByIdAndUpdate(req.params.id, payload, {
+  const updateFilter = { _id: req.params.id, status: existingAllocation.status };
+  if (req.authUser.role === 'driver' && payload.status !== existingAllocation.status) {
+    updateFilter['stopRequest.status'] = { $ne: 'pending' };
+    updateFilter['rejectionRequest.status'] = { $ne: 'pending' };
+  }
+  // Request reviews and GPS updates own these fields; do not overwrite newer values from a read snapshot.
+  const updatePayload = { ...payload };
+  for (const field of ['_id', '__v', 'createdAt', 'updatedAt', 'stopRequest', 'rejectionRequest', 'currentLocation', 'aiState', 'behaviorEvents', 'aiAlerts', 'driverScore']) delete updatePayload[field];
+  const updatedAllocation = await DriverAllocation.findOneAndUpdate(updateFilter, { $set: updatePayload }, {
     new: true,
     runValidators: true,
   });
+  if (!updatedAllocation) return res.status(409).json({ success: false, message: 'The trip or an approval request changed. Refresh the booking before continuing.' });
 
   await Promise.all([
     reconcileVehicleStatus(existingAllocation.vehicleId),
@@ -632,18 +641,10 @@ export const requestDriverAllocationCompletion = asyncHandler(async (req, res) =
 });
 
 export const requestDriverAllocationStop = asyncHandler(async (req, res) => {
-  const existingAllocation = await requireInTransitAllocationForDriverAction(req.params.id);
   const reason = requireActionReason(req.body?.reason);
-
-  if (existingAllocation.stopRequest?.status === 'pending') {
-    const error = new Error('A stop trip request is already pending review.');
-    error.statusCode = 409;
-    throw error;
-  }
-
-  await DriverAllocation.findByIdAndUpdate(
-    req.params.id,
-    {
+  const savedAllocation = await DriverAllocation.findOneAndUpdate(
+    { _id: req.params.id, driverId: req.authUser.id, status: 'in_transit', 'stopRequest.status': { $ne: 'pending' } },
+    { $set: {
       stopRequest: {
         status: 'pending',
         reason,
@@ -652,14 +653,13 @@ export const requestDriverAllocationStop = asyncHandler(async (req, res) => {
         reviewedBy: null,
         reviewNotes: '',
       },
-    },
+    } },
     {
       new: true,
       runValidators: true,
     }
-  );
-
-  const savedAllocation = await requireAllocation(req.params.id);
+  ).populate(allocationPopulation);
+  if (!savedAllocation) return res.status(409).json({ success: false, message: 'Only your active in-transit trip can be requested for cancellation, and a request must not already be pending.' });
 
   dispatchNotificationTask(
     notifyDriverStopTripRequested(savedAllocation),
@@ -726,58 +726,39 @@ export const reviewDriverAllocationStopRequest = asyncHandler(async (req, res) =
   }
 
   const previousAllocation = await requireAllocation(req.params.id);
-  const existingAllocation = await DriverAllocation.findById(req.params.id);
-
-  if (!existingAllocation) {
-    const error = new Error('Driver allocation not found.');
-    error.statusCode = 404;
-    throw error;
-  }
-
-  if (existingAllocation.stopRequest?.status !== 'pending') {
-    const error = new Error('No pending stop trip request is available for review.');
-    error.statusCode = 409;
-    throw error;
-  }
-
+  const reviewNotes = requireActionReason(req.body?.reviewNotes);
   const approved = action === 'approve';
   const updatePayload = {
-    stopRequest: {
-      ...(existingAllocation.stopRequest?.toObject?.() ??
-        existingAllocation.stopRequest ??
-        {}),
-      status: approved ? 'approved' : 'rejected',
-      reviewedAt: new Date(),
-      reviewedBy: req.authUser.id,
-      reviewNotes: normalizeActionText(req.body?.reviewNotes),
-    },
+    'stopRequest.status': approved ? 'approved' : 'rejected',
+    'stopRequest.reviewedAt': new Date(),
+    'stopRequest.reviewedBy': req.authUser.id,
+    'stopRequest.reviewNotes': reviewNotes,
   };
 
   if (approved) {
     updatePayload.status = 'cancelled';
     updatePayload.endTime = new Date();
-    updatePayload.actualDuration = existingAllocation.startTime
+    updatePayload.actualDuration = previousAllocation.startTime
       ? Math.max(
           1,
           Math.round(
             (updatePayload.endTime.getTime() -
-              new Date(existingAllocation.startTime).getTime()) /
+              new Date(previousAllocation.startTime).getTime()) /
               60000
           )
         )
-      : existingAllocation.actualDuration;
+      : previousAllocation.actualDuration;
   }
 
-  await DriverAllocation.findByIdAndUpdate(req.params.id, updatePayload, {
+  const savedAllocation = await DriverAllocation.findOneAndUpdate({ _id: req.params.id, status: 'in_transit', 'stopRequest.status': 'pending' }, { $set: updatePayload }, {
     new: true,
     runValidators: true,
-  });
+  }).populate(allocationPopulation);
+  if (!savedAllocation) return res.status(409).json({ success: false, message: 'No pending cancellation is available for this active trip. Refresh the booking.' });
 
   if (approved) {
-    await reconcileVehicleStatus(existingAllocation.vehicleId);
+    await reconcileVehicleStatus(savedAllocation.vehicleId.id);
   }
-
-  const savedAllocation = await requireAllocation(req.params.id);
 
   dispatchNotificationTask(
     notifyDriverStopTripReviewed({
