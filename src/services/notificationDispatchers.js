@@ -268,7 +268,7 @@ export const notifyDriverStopTripReviewed = async ({
     type: approved ? 'driver' : 'alert',
     title: approved ? 'Trip stop approved' : 'Trip stop rejected',
     message: approved
-      ? `${vehicleLabel} trip stop was approved. The dispatch is now cancelled.${
+      ? `${vehicleLabel} trip stop was approved. The delivery is now cancelled.${
           notes ? ` Note: ${notes}` : ''
         }`
       : `${vehicleLabel} trip stop was rejected. Continue the trip unless admin gives new instructions.${
@@ -522,8 +522,8 @@ export const notifyDriverAllocationUpdated = async ({
       createNotificationsForUsers({
         userIds: [nextDriverId],
         type: 'driver',
-        title: 'Drive cancelled',
-        message: `${vehicleLabel} drive was cancelled.`,
+        title: 'Delivery cancelled',
+        message: `${vehicleLabel} delivery was cancelled.`,
         data: {
           entityType: 'driver_allocation',
           entityId: nextAllocation.id,
@@ -554,8 +554,8 @@ export const notifyDriverAllocationUpdated = async ({
         message = `${driverName} completed the trip for ${vehicleLabel}.`;
         break;
       case 'cancelled':
-        title = 'Dispatch cancelled';
-        message = `${driverName} dispatch for ${vehicleLabel} was cancelled.`;
+        title = 'Delivery cancelled';
+        message = `${driverName}'s delivery for ${vehicleLabel} was cancelled.`;
         break;
       default:
         break;
@@ -602,8 +602,8 @@ export const notifyDriverAllocationUpdated = async ({
         message = `${driverName} completed the trip for ${vehicleLabel}.`;
         break;
       case 'cancelled':
-        title = 'Dispatch cancelled';
-        message = `${driverName} dispatch for ${vehicleLabel} was cancelled.`;
+        title = 'Delivery cancelled';
+        message = `${driverName}'s delivery for ${vehicleLabel} was cancelled.`;
         break;
       default:
         break;

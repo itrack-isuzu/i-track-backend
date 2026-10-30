@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { presentNotification } from '../src/utils/notificationPresentation.js';
 
 // Evaluate actual handlers with injected in-memory repositories. No DB or providers are used.
 async function loadFixture(path, mocks, exports) {
@@ -354,7 +355,7 @@ test('notification and token operations ignore no identity gaps and reject other
   const access = await accessFixture();
   let query;
   const notifications = await loadFixture('../src/controllers/notificationsController.js', {
-    ...access, asyncHandler: directAsync, sendSuccess: () => {},
+    ...access, asyncHandler: directAsync, sendSuccess: () => {}, presentNotification,
     Notification: { find: (value) => { query = value; return { sort: async () => [] }; } },
   }, ['listNotifications', 'registerPushToken', 'unregisterPushToken', 'markAllNotificationsRead']);
   await notifications.listNotifications({ authUser: user('driver'), query: {} }, {});

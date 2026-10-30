@@ -4,6 +4,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { sendSuccess } from '../utils/apiResponse.js';
 import { authenticatedId, accessError } from '../middleware/operationAccess.js';
 import { resolveNotificationTarget } from '../services/notificationTargetService.js';
+import { presentNotification } from '../utils/notificationPresentation.js';
 import {
   createNotificationsForUsers,
   registerUserPushToken,
@@ -44,7 +45,7 @@ export const listNotifications = asyncHandler(async (req, res) => {
   }).sort({ createdAt: -1 });
 
   sendSuccess(res, {
-    data: notifications,
+    data: notifications.map(presentNotification),
     message: 'Notifications fetched successfully.',
   });
 });
@@ -91,7 +92,7 @@ export const markNotificationRead = asyncHandler(async (req, res) => {
   }
 
   sendSuccess(res, {
-    data: notification,
+    data: presentNotification(notification),
     message: 'Notification marked as read.',
   });
 });
@@ -118,7 +119,7 @@ export const markAllNotificationsRead = asyncHandler(async (req, res) => {
   }).sort({ createdAt: -1 });
 
   sendSuccess(res, {
-    data: notifications,
+    data: notifications.map(presentNotification),
     message: 'All notifications marked as read.',
   });
 });
